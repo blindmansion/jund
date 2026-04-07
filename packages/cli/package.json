@@ -1,0 +1,35 @@
+{
+  "name": "@jund/cli",
+  "version": "0.1.0",
+  "description": "Minimal interactive CLI for the jund coding agent harness.",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "jund": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "check": "bunx tsc --noEmit -p tsconfig.json",
+    "dev": "bun src/cli.ts",
+    "test": "bun -e \"console.log('No CLI tests yet')\""
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.66",
+    "@clack/prompts": "^1.2.0",
+    "ai": "^6.0.146",
+    "just-bash": "^2.14.0"
+  }
+}
