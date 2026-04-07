@@ -15,15 +15,15 @@ import {
   tasks,
   text,
 } from "@clack/prompts";
-import { Bash, ReadWriteFs } from "just-bash";
-import { createAISDKProvider } from "../../core/src/adapters/ai-sdk.ts";
+import { createAISDKProvider } from "@jund/core/ai-sdk";
 import {
   createSession,
   getAssistantText,
   type AgentEvent,
   type Environment,
   type Session,
-} from "../../core/src/index.ts";
+} from "@jund/core";
+import { Bash, ReadWriteFs } from "just-bash";
 
 const DEFAULT_MODEL = process.env.LIVE_LLM_MODEL ?? "claude-sonnet-4-20250514";
 const DEFAULT_WORKDIR = "/";

@@ -19,6 +19,7 @@
       "dependencies": {
         "@ai-sdk/anthropic": "^3.0.66",
         "@clack/prompts": "^1.2.0",
+        "@jund/core": "workspace:*",
         "ai": "^6.0.146",
         "just-bash": "^2.14.0",
       },

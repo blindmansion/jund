@@ -27,6 +27,7 @@
     "test": "bun -e \"console.log('No CLI tests yet')\""
   },
   "dependencies": {
+    "@jund/core": "workspace:*",
     "@ai-sdk/anthropic": "^3.0.66",
     "@clack/prompts": "^1.2.0",
     "ai": "^6.0.146",
