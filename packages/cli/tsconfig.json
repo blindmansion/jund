@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../..",
+    "types": ["bun", "node"],
+    "paths": {
+      "@jund/core": ["../core/src/index.ts"],
+      "@jund/core/ai-sdk": ["../core/src/adapters/ai-sdk.ts"]
+    },
+    "ignoreDeprecations": "6.0"
+  },
+  "include": [
+    "src/**/*.ts",
+    "../core/src/**/*.ts"
+  ]
+}
