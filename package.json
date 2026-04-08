@@ -6,6 +6,7 @@
     "build": "bun --filter '*' build",
     "check": "bun --filter '*' check",
     "test": "bun --filter '*' test",
+    "cli": "bun packages/cli/src/cli.ts",
     "format": "oxfmt --write .",
     "lint": "oxlint --fix"
   },

@@ -1,6 +1,6 @@
 {
   "name": "@jund/cli",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "description": "Minimal interactive CLI for the jund coding agent harness.",
   "private": true,
   "license": "MIT",
@@ -27,6 +27,7 @@
     "test": "bun -e \"console.log('No CLI tests yet')\""
   },
   "dependencies": {
+    "@ai-sdk/openai": "^3.0.52",
     "@jund/core": "workspace:*",
     "@ai-sdk/anthropic": "^3.0.66",
     "@clack/prompts": "^1.2.0",

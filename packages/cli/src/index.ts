@@ -1,6 +1,7 @@
 import path from "node:path";
 import process from "node:process";
 import { anthropic } from "@ai-sdk/anthropic";
+import { openai } from "@ai-sdk/openai";
 import {
   box,
   cancel as cancelPrompt,
@@ -10,6 +11,7 @@ import {
   log,
   outro,
   path as pathPrompt,
+  select,
   spinner,
   taskLog,
   tasks,
@@ -25,8 +27,12 @@ import {
 } from "@jund/core";
 import { Bash, ReadWriteFs } from "just-bash";
 
-const DEFAULT_MODEL = process.env.LIVE_LLM_MODEL ?? "claude-sonnet-4-20250514";
+const DEFAULT_PROVIDER = "anthropic" as const;
+const DEFAULT_ANTHROPIC_MODEL = process.env.LIVE_LLM_MODEL ?? "claude-sonnet-4-5";
+const DEFAULT_OPENAI_MODEL = process.env.OPENAI_MODEL ?? "gpt-5.4";
 const DEFAULT_WORKDIR = "/";
+
+type ProviderId = "anthropic" | "openai";
 
 class PromptCancelledError extends Error {
   constructor() {
@@ -101,6 +107,7 @@ function formatToolOutput(chunk: string): string {
 
 function renderSessionBox(options: {
   workspace: string;
+  provider: ProviderId;
   modelName: string;
   sessionId: string;
   turnCount?: number;
@@ -108,6 +115,7 @@ function renderSessionBox(options: {
 }) {
   const lines = [
     `Workspace  ${options.workspace}`,
+    `Provider   ${options.provider}`,
     `Model      ${options.modelName}`,
     `Session    ${options.sessionId}`,
   ];
@@ -145,51 +153,43 @@ function renderHelpBox() {
 
 async function promptForSetup(initialArgInput: string): Promise<{
   workspace: string;
+  provider: ProviderId;
   modelName: string;
   initialTask: string;
 }> {
-  const results = await group(
-    {
-      workspace: async () =>
-        pathPrompt({
-          message: "Workspace",
-          directory: true,
-          initialValue: process.cwd(),
-          withGuide: false,
-        }),
-      modelName: async () =>
-        text({
-          message: "Anthropic model",
-          placeholder: DEFAULT_MODEL,
-          withGuide: false,
-        }),
-      initialTask: async () => {
-        if (initialArgInput) {
-          return initialArgInput;
-        }
-
-        return text({
-          message: "Task",
-          placeholder: "Inspect the repo and suggest the next change",
-          withGuide: false,
-        });
-      },
-    },
-    {
-      onCancel() {
-        throw new PromptCancelledError();
-      },
-    },
+  const workspace = path.resolve(
+    unwrapPrompt(
+      await pathPrompt({
+        message: "Workspace",
+        directory: true,
+        initialValue: process.cwd(),
+        withGuide: false,
+      }),
+    ),
   );
 
-  const workspace = path.resolve(unwrapPrompt(results.workspace));
-  const modelName = unwrapPrompt(results.modelName).trim() || DEFAULT_MODEL;
-  const initialTask = unwrapPrompt(results.initialTask).trim();
+  const provider = unwrapPrompt(
+    await select({
+      message: "Provider",
+      initialValue: DEFAULT_PROVIDER,
+      options: [
+        { value: "anthropic", label: "Anthropic" },
+        { value: "openai", label: "OpenAI" },
+      ],
+      withGuide: false,
+    }),
+  ) as ProviderId;
 
-  return { workspace, modelName, initialTask };
+  const defaultModel = provider === "anthropic" ? DEFAULT_ANTHROPIC_MODEL : DEFAULT_OPENAI_MODEL;
+  const modelName = await promptForInput("Model", defaultModel, defaultModel);
+  const initialTask = initialArgInput
+    ? initialArgInput
+    : await promptForInput("Task", "Inspect the repo and suggest the next change");
+
+  return { workspace, provider, modelName, initialTask };
 }
 
-async function promptForInput(message: string, placeholder: string): Promise<string> {
+async function promptForInput(message: string, placeholder: string, fallback = ""): Promise<string> {
   const value = unwrapPrompt(
     await text({
       message,
@@ -197,10 +197,17 @@ async function promptForInput(message: string, placeholder: string): Promise<str
       withGuide: false,
     }),
   );
-  return value.trim();
+  const trimmed = value.trim();
+  return trimmed || fallback;
 }
 
-function handleSlashCommand(input: string, session: Session, workspace: string, modelName: string): CommandResult {
+function handleSlashCommand(
+  input: string,
+  session: Session,
+  workspace: string,
+  provider: ProviderId,
+  modelName: string,
+): CommandResult {
   if (input === "/exit" || input === "/quit") {
     return "exit";
   }
@@ -208,7 +215,7 @@ function handleSlashCommand(input: string, session: Session, workspace: string, 
   if (input === "/status") {
     const messages = session.messages();
     const turnCount = messages.filter((message) => message.role === "user").length;
-    renderSessionBox({ workspace, modelName, sessionId: session.id, turnCount });
+    renderSessionBox({ workspace, provider, modelName, sessionId: session.id, turnCount });
     return "handled";
   }
 
@@ -412,15 +419,21 @@ function createTurnReporter(turnNumber: number, input: string) {
 export async function main(): Promise<void> {
   intro("@jund/cli", { withGuide: false });
 
-  if (!process.env.ANTHROPIC_API_KEY) {
-    cancelPrompt("Set ANTHROPIC_API_KEY before running the CLI.", { withGuide: false });
-    process.exitCode = 1;
-    return;
-  }
-
   try {
     const initialArgInput = process.argv.slice(2).join(" ").trim();
     const setup = await promptForSetup(initialArgInput);
+
+    if (setup.provider === "anthropic" && !process.env.ANTHROPIC_API_KEY) {
+      cancelPrompt("Set ANTHROPIC_API_KEY before running the Anthropic CLI flow.", { withGuide: false });
+      process.exitCode = 1;
+      return;
+    }
+
+    if (setup.provider === "openai" && !process.env.OPENAI_API_KEY) {
+      cancelPrompt("Set OPENAI_API_KEY before running the OpenAI CLI flow.", { withGuide: false });
+      process.exitCode = 1;
+      return;
+    }
 
     let env!: Environment;
     let session!: Session;
@@ -442,11 +455,16 @@ export async function main(): Promise<void> {
       {
         title: "Create agent session",
         async task(message) {
-          message(`Anthropic ${setup.modelName}`);
+          message(`${setup.provider} ${setup.modelName}`);
+
+          const providerModel =
+            setup.provider === "anthropic"
+              ? anthropic(setup.modelName)
+              : openai(setup.modelName);
 
           const llm = createAISDKProvider({
-            model: anthropic(setup.modelName),
-            id: `anthropic:${setup.modelName}`,
+            model: providerModel,
+            id: `${setup.provider}:${setup.modelName}`,
             name: setup.modelName,
             contextLimit: 200_000,
             outputLimit: 16_384,
@@ -476,13 +494,13 @@ export async function main(): Promise<void> {
 
     renderSessionBox({
       workspace: setup.workspace,
+      provider: setup.provider,
       modelName: setup.modelName,
       sessionId: session.id,
     });
 
     let turnNumber = 1;
     let input = setup.initialTask;
-    let lastTurn: TurnSummary | undefined;
 
     while (true) {
       if (!input) {
@@ -497,7 +515,7 @@ export async function main(): Promise<void> {
       }
 
       if (trimmed.startsWith("/")) {
-        const result = handleSlashCommand(trimmed, session, setup.workspace, setup.modelName);
+        const result = handleSlashCommand(trimmed, session, setup.workspace, setup.provider, setup.modelName);
         if (result === "exit") {
           break;
         }
@@ -508,9 +526,9 @@ export async function main(): Promise<void> {
 
         try {
           const reply = await session.prompt(trimmed);
-          lastTurn = reporter.finish(getAssistantText(reply).trim());
+          reporter.finish(getAssistantText(reply).trim());
         } catch (error) {
-          lastTurn = reporter.fail(error);
+          reporter.fail(error);
         } finally {
           activeTurnReporter = undefined;
         }
