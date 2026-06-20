@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { bashTool } from "../../../src/tool/bash.ts";
+import { createBashTool } from "../../../src/tool/bash.ts";
 import { createMockEnvironment, createToolContext } from "../../test-helpers.ts";
 import type { ShellOps } from "../../../src/types.ts";
 
@@ -23,19 +23,21 @@ function mockShell(
   };
 }
 
-function setup(shell?: ShellOps) {
+function setup(shell?: ShellOps, workdir = "/project") {
   const env = createMockEnvironment();
   if (shell) {
     env.shell = shell;
   }
-  const ctx = createToolContext({ env });
-  return { tool: bashTool, ctx, env };
+  const tool = createBashTool(env, { workdir });
+  const ctx = createToolContext();
+  return { tool, ctx, env };
 }
 
 describe("bashTool", () => {
   test("has correct id and metadata", () => {
-    expect(bashTool.id).toBe("bash");
-    expect(bashTool.promptSnippet).toBeDefined();
+    const { tool } = setup();
+    expect(tool.id).toBe("bash");
+    expect(tool.promptSnippet).toBeDefined();
   });
 
   test("executes a command and returns output", async () => {
@@ -74,17 +76,15 @@ describe("bashTool", () => {
     const chunks: string[] = [];
     const env = createMockEnvironment();
     env.shell = mockShell({ stdout: "streamed data" });
-    const ctx = createToolContext({
-      env,
-      onUpdate: (r) => chunks.push(r.output),
-    });
+    const tool = createBashTool(env, { workdir: "/project" });
+    const ctx = createToolContext({ onUpdate: (r) => chunks.push(r.output) });
 
-    await bashTool.execute({ command: "cat big.log" }, ctx);
+    await tool.execute({ command: "cat big.log" }, ctx);
 
     expect(chunks).toEqual(["streamed data"]);
   });
 
-  test("passes cwd from context", async () => {
+  test("passes configured workdir as cwd", async () => {
     let receivedCwd: string | undefined;
     const shell: ShellOps = {
       async exec(_cmd, options) {
@@ -93,11 +93,8 @@ describe("bashTool", () => {
       },
     };
 
-    const { tool, ctx } = setup(shell);
-    await tool.execute(
-      { command: "ls" },
-      createToolContext({ env: { ...ctx.env, shell }, workdir: "/my/project" }),
-    );
+    const { tool, ctx } = setup(shell, "/my/project");
+    await tool.execute({ command: "ls" }, ctx);
 
     expect(receivedCwd).toBe("/my/project");
   });
@@ -113,8 +110,9 @@ describe("bashTool", () => {
 
     const env = createMockEnvironment();
     env.shell = shell;
-    const ctx = createToolContext({ env });
-    await bashTool.execute({ command: "sleep 10", timeout: 5000 }, ctx);
+    const tool = createBashTool(env, { workdir: "/project" });
+    const ctx = createToolContext();
+    await tool.execute({ command: "sleep 10", timeout: 5000 }, ctx);
 
     expect(receivedSignal).toBeInstanceOf(AbortSignal);
     expect(receivedSignal).not.toBe(ctx.abort);
@@ -133,8 +131,9 @@ describe("bashTool", () => {
     controller.abort();
     const env = createMockEnvironment();
     env.shell = shell;
-    const ctx = createToolContext({ env, abort: controller.signal });
-    await bashTool.execute({ command: "ls" }, ctx);
+    const tool = createBashTool(env, { workdir: "/project" });
+    const ctx = createToolContext({ abort: controller.signal });
+    await tool.execute({ command: "ls" }, ctx);
 
     expect(receivedSignal).toBeInstanceOf(AbortSignal);
     expect(receivedSignal?.aborted).toBe(true);

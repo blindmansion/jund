@@ -1,7 +1,9 @@
 import { z } from "zod";
 import type { ToolDef, ToolContext, ToolResult } from "./types.ts";
+import type { Environment } from "../types.ts";
 import { resolvePath } from "../util/path.ts";
 import { unifiedDiff } from "../util/diff.ts";
+import { workdirGuideline, type FileToolOptions } from "./file-tool.ts";
 
 const EditEntry = z.object({
   oldText: z.string().describe("Exact text to find in the original file"),
@@ -72,40 +74,46 @@ function applyEdits(content: string, edits: EditParams["edits"]): string {
   return result;
 }
 
-export const editTool: ToolDef<EditParams> = {
-  id: "edit",
-  description:
-    "Apply find-and-replace edits to a file. Each edit is matched against the original file content, not incrementally. " +
-    "Do not include overlapping edits. If two changes touch nearby lines, merge them into one edit.",
-  parameters: EditParams,
-  prepareArgs: normalizeEditArgs,
+export function createEditTool(env: Environment, options: FileToolOptions): ToolDef<EditParams> {
+  const { workdir } = options;
+  return {
+    id: "edit",
+    description:
+      "Apply find-and-replace edits to a file. Each edit is matched against the original file content, not incrementally. " +
+      "Do not include overlapping edits. If two changes touch nearby lines, merge them into one edit.",
+    parameters: EditParams,
+    prepareArgs: normalizeEditArgs,
 
-  promptSnippet: "edit — Apply find-and-replace edits to a file. Returns a diff.",
-  promptGuidelines: [
-    "Each edit is matched against the original file. Do not account for earlier edits when writing later ones.",
-    "If two edits touch nearby or overlapping text, merge them into a single edit.",
-    "Include enough surrounding context in oldText to uniquely identify the location.",
-  ],
+    promptSnippet: "edit — Apply find-and-replace edits to a file. Returns a diff.",
+    promptGuidelines: [
+      "Each edit is matched against the original file. Do not account for earlier edits when writing later ones.",
+      "If two edits touch nearby or overlapping text, merge them into a single edit.",
+      "Include enough surrounding context in oldText to uniquely identify the location.",
+      workdirGuideline(workdir),
+    ],
 
-  async execute(params: EditParams, ctx: ToolContext): Promise<ToolResult> {
-    const fs = ctx.env.fs;
-    const fullPath = resolvePath(ctx.workdir, params.path);
+    mutationKey: (params) => resolvePath(workdir, params.path),
 
-    if (!(await fs.exists(fullPath))) {
-      throw new Error(`File not found: ${params.path}`);
-    }
+    async execute(params: EditParams, _ctx: ToolContext): Promise<ToolResult> {
+      const fs = env.fs;
+      const fullPath = resolvePath(workdir, params.path);
 
-    const original = await fs.readFile(fullPath);
-    const modified = applyEdits(original, params.edits);
+      if (!(await fs.exists(fullPath))) {
+        throw new Error(`File not found: ${params.path}`);
+      }
 
-    await fs.writeFile(fullPath, modified);
+      const original = await fs.readFile(fullPath);
+      const modified = applyEdits(original, params.edits);
 
-    const diff = unifiedDiff(original, modified, params.path);
+      await fs.writeFile(fullPath, modified);
 
-    return {
-      output: diff || "No changes.",
-      title: `Edited ${params.path} (${params.edits.length} edit${params.edits.length > 1 ? "s" : ""})`,
-      metadata: { path: fullPath, editCount: params.edits.length },
-    };
-  },
-};
+      const diff = unifiedDiff(original, modified, params.path);
+
+      return {
+        output: diff || "No changes.",
+        title: `Edited ${params.path} (${params.edits.length} edit${params.edits.length > 1 ? "s" : ""})`,
+        metadata: { path: fullPath, editCount: params.edits.length },
+      };
+    },
+  };
+}

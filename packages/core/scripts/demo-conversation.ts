@@ -4,7 +4,13 @@ import readline from "node:readline";
 import { Bash, ReadWriteFs } from "just-bash";
 import { anthropic } from "@ai-sdk/anthropic";
 import { createAISDKProvider } from "../src/adapters/ai-sdk.ts";
-import { createSession, getAssistantText, type Environment, type Session } from "../src/index.ts";
+import {
+  createCoderTools,
+  createSession,
+  getAssistantText,
+  type Environment,
+  type Session,
+} from "../src/index.ts";
 import {
   createDemoLogger,
   ensureAnthropicKey,
@@ -150,8 +156,7 @@ async function main(): Promise<void> {
   const llm = createAISDKProvider({ model: anthropic(model.name), ...model });
   const session = await createSession({
     llm,
-    workdir,
-    env,
+    tools: createCoderTools(env, { workdir }),
     systemPrompt: [
       "You are pair-programming on a small TypeScript todo app.",
       "The user will ask you to inspect, modify, or extend the code across multiple turns.",

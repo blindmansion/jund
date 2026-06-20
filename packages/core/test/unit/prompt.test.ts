@@ -40,7 +40,6 @@ describe("buildSystemPrompt", () => {
           promptGuidelines: ["Use offsets for large files."],
         }),
       ],
-      workdir: "/project",
       appendPrompt: "Host note.",
       now: new Date("2026-04-05T12:00:00Z"),
     });
@@ -53,14 +52,12 @@ describe("buildSystemPrompt", () => {
     expect(prompt.match(/Use offsets for large files\./g)).toHaveLength(1);
     expect(prompt).toContain("Host note.");
     expect(prompt).toContain("Date: Sun Apr 05 2026");
-    expect(prompt).toContain("Working directory: /project");
   });
 
   test("omits empty sections cleanly", () => {
     const prompt = buildSystemPrompt({
       agentPrompt: "Base prompt.",
       tools: [makeTool("read")],
-      workdir: "/project",
       now: new Date("2026-04-05T12:00:00Z"),
     });
 

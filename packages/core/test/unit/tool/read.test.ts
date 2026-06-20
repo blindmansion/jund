@@ -1,17 +1,19 @@
 import { describe, test, expect } from "bun:test";
-import { readTool } from "../../../src/tool/read.ts";
+import { createReadTool } from "../../../src/tool/read.ts";
 import { createMockEnvironment, createToolContext } from "../../test-helpers.ts";
 
 function setup(files: Record<string, string> = {}) {
   const env = createMockEnvironment(files);
-  const ctx = createToolContext({ env });
-  return { tool: readTool, ctx, env };
+  const tool = createReadTool(env, { workdir: "/project" });
+  const ctx = createToolContext();
+  return { tool, ctx, env };
 }
 
 describe("readTool", () => {
   test("has correct id and metadata", () => {
-    expect(readTool.id).toBe("read");
-    expect(readTool.promptSnippet).toBeDefined();
+    const { tool } = setup();
+    expect(tool.id).toBe("read");
+    expect(tool.promptSnippet).toBeDefined();
   });
 
   test("reads a file with line numbers", async () => {
@@ -64,9 +66,9 @@ describe("readTool", () => {
   test("shows empty directory message", async () => {
     const env = createMockEnvironment();
     await env.fs.mkdir("/project/empty");
-    const ctx = createToolContext({ env });
+    const tool = createReadTool(env, { workdir: "/project" });
 
-    const result = await readTool.execute({ path: "empty" }, ctx);
+    const result = await tool.execute({ path: "empty" }, createToolContext());
     expect(result.output).toBe("(empty directory)");
   });
 

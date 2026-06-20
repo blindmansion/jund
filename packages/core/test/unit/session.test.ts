@@ -13,6 +13,7 @@ import type { LLMProvider, LLMRequest, LLMStreamEvent } from "../../src/llm.ts";
 import type { CompactionStrategy, ToolDef } from "../../src/tool/types.ts";
 import type { Message } from "../../src/types.ts";
 import { createMockEnvironment } from "../test-helpers.ts";
+import { createCoderTools } from "../../src/tool/coder.ts";
 import { SessionPersistenceAdapter, MemoryStorage } from "../../src/storage/index.ts";
 import type { Session as StorageSession } from "../../src/storage/types.ts";
 
@@ -146,8 +147,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
     });
 
     const result = await session.prompt("Read file.txt and summarize it.");
@@ -216,8 +216,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
     });
 
     const result = await session.prompt("Use a subagent.");
@@ -269,8 +268,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
     });
 
     const result = await session.prompt("Use a missing subagent.");
@@ -341,8 +339,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
     });
 
     const promptPromise = session.prompt("Use a cancellable subagent.");
@@ -393,8 +390,7 @@ describe("createSession", () => {
     let beforePromptCalls = 0;
     session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforePrompt: async () => {
         beforePromptCalls += 1;
         if (beforePromptCalls === 1) {
@@ -430,8 +426,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       retry: { maxAttempts: 2, maxDelayMs: 0 },
       onEvent(event) {
         events.push(event);
@@ -473,8 +468,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: SMALL_CONTEXT_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       compaction: { strategy: compaction },
       transformContext: async (messages) => {
         transformSeen.push(
@@ -538,8 +532,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: SMALL_CONTEXT_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       compaction: { threshold: 2, strategy: compaction },
       onEvent(event) {
         events.push(event);
@@ -585,9 +578,7 @@ describe("createSession", () => {
 
     session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
-      tools: [extraTool],
+      tools: [...createCoderTools(env, { workdir: "/project" }), extraTool],
       beforePrompt: async () => {
         beforePromptCalls += 1;
         if (beforePromptCalls === 1) {
@@ -605,7 +596,7 @@ describe("createSession", () => {
     expect(session.getTools().map((tool) => tool.id)).not.toContain("extraTool");
   });
 
-  test("setTools replaces custom tools and keeps built-ins on the next iteration", async () => {
+  test("setTools replaces custom tools (including coder tools) on the next iteration", async () => {
     const env = createMockEnvironment({ "/project/file.txt": "hello" });
     const oldTool = makeExtraTool("oldTool");
     const newTool = makeExtraTool("newTool");
@@ -632,9 +623,7 @@ describe("createSession", () => {
 
     session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
-      tools: [oldTool],
+      tools: [...createCoderTools(env, { workdir: "/project" }), oldTool],
       beforePrompt: async () => {
         beforePromptCalls += 1;
         if (beforePromptCalls === 1) {
@@ -647,20 +636,17 @@ describe("createSession", () => {
     await session.prompt("Read file.txt.");
 
     expect(seenToolLists).toHaveLength(2);
-    expect(seenToolLists[0]).toContain("oldTool");
-    expect(seenToolLists[1]).toContain("newTool");
-    expect(seenToolLists[1]).not.toContain("oldTool");
-    expect(seenToolLists[1]).toEqual(
-      expect.arrayContaining(["read", "write", "edit", "bash", "task"]),
+    expect(seenToolLists[0]).toEqual(
+      expect.arrayContaining(["read", "write", "edit", "bash", "task", "oldTool"]),
     );
-    expect(session.getTools().map((tool) => tool.id)).toEqual([
-      "read",
-      "write",
-      "edit",
-      "bash",
-      "task",
-      "newTool",
-    ]);
+    expect(seenToolLists[1]).toContain("newTool");
+    expect(seenToolLists[1]).toContain("task");
+    expect(seenToolLists[1]).not.toContain("oldTool");
+    expect(seenToolLists[1]).not.toContain("read");
+    expect(seenToolLists[1]).not.toContain("write");
+    expect(seenToolLists[1]).not.toContain("edit");
+    expect(seenToolLists[1]).not.toContain("bash");
+    expect(session.getTools().map((tool) => tool.id)).toEqual(["task", "newTool"]);
   });
 
   test("hook setters take effect on the next iteration", async () => {
@@ -692,9 +678,7 @@ describe("createSession", () => {
 
     session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
-      tools: [lateTool],
+      tools: [...createCoderTools(env, { workdir: "/project" }), lateTool],
       afterToolCall: async ({ toolName }) => {
         if (toolName === "read") {
           session.setBeforeToolCall(async ({ toolName, args }) => {
@@ -752,8 +736,7 @@ describe("createSession", () => {
 
     session = await createSession({
       llm: { llm: llm1, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       afterToolCall: async ({ toolName }) => {
         if (toolName === "read") {
           session.setTransformContext(async (messages) => [
@@ -812,8 +795,7 @@ describe("createSession", () => {
         ]),
         model: TEST_MODEL,
       },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       onEvent(event) {
         events.push(event);
       },
@@ -851,8 +833,7 @@ describe("createSession", () => {
     const events: AgentEvent[] = [];
     const session = await createSession({
       llm: { llm: makeLLM(() => [{ type: "error", error: new Error("boom") }]), model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       onEvent(event) {
         events.push(event);
       },
@@ -880,8 +861,7 @@ describe("createSession", () => {
         ]),
         model: TEST_MODEL,
       },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
 
@@ -892,7 +872,6 @@ describe("createSession", () => {
     expect(stored!.id).toBe("session-1");
     expect(stored!.resumeTurnConfig.model).toEqual({ provider: "test", model: "mock-1" });
     expect(stored!.resumeTurnConfig.agent).toBe("coder");
-    expect(stored!.workdir).toBe("/project");
     expect(await storage.loadVisibleMessages("session-1")).toEqual(session.messages());
   });
 
@@ -909,8 +888,7 @@ describe("createSession", () => {
         model: TEST_MODEL,
       },
       defaultAgent: "missing-agent",
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
 
@@ -930,23 +908,19 @@ describe("createSession", () => {
     const first = await createSession({
       sessionId: "session-1",
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
     await first.prompt("hello");
 
     const resumed = await resumeSession("session-1", {
       llm: { llm, model: TEST_MODEL_2 },
-      workdir: "/other-project",
-      env: createMockEnvironment(),
       storage: driver,
     });
 
     expect(resumed.messages()).toEqual(first.messages());
     const stored = await storage.loadSession("session-1");
     expect(stored!.resumeTurnConfig.model).toEqual({ provider: "test", model: "mock-2" });
-    expect(stored!.workdir).toBe("/other-project");
   });
 
   test("persists compacted visible history across resume and branch", async () => {
@@ -975,8 +949,7 @@ describe("createSession", () => {
     const session = await createSession({
       sessionId: "session-1",
       llm: { llm, model: SMALL_CONTEXT_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
       compaction: { strategy: compaction },
     });
@@ -997,8 +970,6 @@ describe("createSession", () => {
 
     const resumed = await resumeSession("session-1", {
       llm: { llm, model: SMALL_CONTEXT_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
       storage: driver,
       compaction: { strategy: compaction },
     });
@@ -1029,8 +1000,7 @@ describe("createSession", () => {
     const parent = await createSession({
       sessionId: "parent",
       llm: { llm, model: SMALL_CONTEXT_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
       compaction: { strategy: compaction },
     });
@@ -1045,8 +1015,6 @@ describe("createSession", () => {
 
     const resumedChild = await resumeSession("child", {
       llm: { llm, model: SMALL_CONTEXT_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
       storage: driver,
       compaction: { strategy: compaction },
     });
@@ -1088,8 +1056,7 @@ describe("createSession", () => {
       createSession({
         sessionId: "session-1",
         llm: { llm, model: TEST_MODEL },
-        workdir: "/project",
-        env: createMockEnvironment(),
+        tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
         storage: createDriver,
       }),
     ).rejects.toThrow("create failed");
@@ -1098,8 +1065,7 @@ describe("createSession", () => {
     const turnSession = await createSession({
       sessionId: "session-2",
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: turnDriver,
     });
     turnDriver.failInsertTurn = true;
@@ -1109,8 +1075,7 @@ describe("createSession", () => {
     const updateSession2 = await createSession({
       sessionId: "session-3",
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: updateDriver,
     });
     updateDriver.failUpdateSession = true;
@@ -1131,8 +1096,7 @@ describe("createSession", () => {
         ]),
         model: TEST_MODEL,
       },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
 
@@ -1185,8 +1149,7 @@ describe("createSession", () => {
         ]),
         model: TEST_MODEL,
       },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: blockingDriver,
     });
 
@@ -1228,8 +1191,7 @@ describe("createSession", () => {
     const parent = await createSession({
       sessionId: "parent",
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
     await parent.prompt("one");
@@ -1288,9 +1250,12 @@ describe("createSession", () => {
     const parent = await createSession({
       sessionId: "parent",
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment({ "/project/file.txt": "real file" }),
-      tools: [readOverride],
+      tools: [
+        ...createCoderTools(createMockEnvironment({ "/project/file.txt": "real file" }), {
+          workdir: "/project",
+        }),
+        readOverride,
+      ],
       storage: driver,
     });
     await parent.prompt("seed");
@@ -1322,8 +1287,7 @@ describe("createSession", () => {
         ]),
         model: TEST_MODEL,
       },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
     });
     await session.prompt("hello");
 
@@ -1344,8 +1308,7 @@ describe("createSession", () => {
     const events: AgentEvent[] = [];
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       agents: [{ name: "coder", systemPrompt: "You are a coder.", mode: "primary", maxSteps: 3 }],
       onEvent(event) {
         events.push(event);
@@ -1380,8 +1343,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
     });
 
     const result = await session.prompt("Run for a while.");
@@ -1404,8 +1366,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       agents: [{ name: "coder", systemPrompt: "You are a coder.", mode: "primary", maxSteps: 1 }],
     });
 
@@ -1434,8 +1395,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       agents: [{ name: "coder", systemPrompt: "You are a coder.", mode: "primary", maxSteps: 10 }],
     });
 
@@ -1487,8 +1447,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       agents: [
         { name: "coder", systemPrompt: "You are a coder.", mode: "primary", maxSteps: 50 },
         {
@@ -1524,8 +1483,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeBranch: async () => ({ cancel: true, reason: "Not allowed" }),
     });
 
@@ -1545,8 +1503,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeBranch: async () => ({ cancel: true }),
     });
 
@@ -1565,8 +1522,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeBranch: async (ctx) => {
         hookCalls.push({
           sessionId: ctx.sessionId,
@@ -1597,8 +1553,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeBranch: async () => ({ cancel: true }),
     });
 
@@ -1624,8 +1579,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeInput: async ({ input }) => ({
         input: `[prefix] ${input}`,
       }),
@@ -1646,8 +1600,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeInput: async () => ({
         input: [{ type: "text", text: "replaced" }],
       }),
@@ -1668,8 +1621,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeInput: async () => ({
         reject: true as const,
         reason: "Bad input",
@@ -1689,8 +1641,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeInput: async () => ({ reject: true as const }),
     });
 
@@ -1706,8 +1657,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeInput: async () => undefined,
     });
 
@@ -1727,8 +1677,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeInput: async (ctx) => {
         hookCalls.push({ sessionId: ctx.sessionId });
         return undefined;
@@ -1749,8 +1698,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeInput: async ({ input }) => ({ input: `v1: ${input}` }),
     });
 
@@ -1774,8 +1722,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeInput: async ({ input }) => ({ input: `modified: ${input}` }),
     });
 
@@ -1814,8 +1761,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: SMALL_CONTEXT_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       compaction: { strategy: compactionStrategy },
       beforeCompaction: async () => ({ cancel: true }),
     });
@@ -1856,8 +1802,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: SMALL_CONTEXT_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       compaction: { strategy: compactionStrategy },
       beforeCompaction: async ({ messages }) => {
         const latestUser = messages.findLast((m) => m.role === "user")!;
@@ -1893,8 +1838,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: SMALL_CONTEXT_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       compaction: { strategy: compactionStrategy },
       beforeCompaction: async (ctx) => {
         hookCalls.push({
@@ -1936,8 +1880,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: SMALL_CONTEXT_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       compaction: { strategy: compactionStrategy },
       beforeCompaction: async () => ({ cancel: true }),
     });
@@ -1972,8 +1915,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       compaction: { strategy: compactionStrategy },
       onEvent(event) {
         events.push(event);
@@ -2003,8 +1945,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       compaction: false,
     });
 
@@ -2026,8 +1967,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeLLMCall: async () => ({
         temperature: 0.2,
         maxOutputTokens: 500,
@@ -2053,8 +1993,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeLLMCall: async () => ({
         providerOptions: { headers: { "X-Trace-Id": "abc-123" } },
       }),
@@ -2076,8 +2015,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeLLMCall: async (ctx) => {
         hookCalls.push({
           sessionId: ctx.sessionId,
@@ -2108,8 +2046,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeLLMCall: async () => undefined,
     });
 
@@ -2132,8 +2069,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeLLMCall: async () => ({ temperature: 0.1 }),
     });
 
@@ -2159,8 +2095,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       beforeLLMCall: async () => ({ temperature: 0.5 }),
     });
 
@@ -2186,8 +2121,7 @@ describe("createSession", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env,
+      tools: createCoderTools(env, { workdir: "/project" }),
       agents: [{ name: "coder", systemPrompt: "You are a coder.", mode: "primary", maxSteps: 2 }],
     });
 
@@ -2210,8 +2144,7 @@ describe("createSession", () => {
     await createSession({
       sessionId: "existing-session",
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
 
@@ -2219,8 +2152,7 @@ describe("createSession", () => {
       createSession({
         sessionId: "existing-session",
         llm: { llm, model: TEST_MODEL },
-        workdir: "/project",
-        env: createMockEnvironment(),
+        tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
         storage: driver,
       }),
     ).rejects.toThrow("Session already exists: existing-session");
@@ -2236,13 +2168,12 @@ describe("createSession", () => {
     await expect(
       resumeSession("nonexistent", {
         llm: { llm, model: TEST_MODEL },
-        env: createMockEnvironment(),
         storage: driver,
       }),
     ).rejects.toThrow("Session not found: nonexistent");
   });
 
-  test("resumeSession defaults workdir and agent from stored session", async () => {
+  test("resumeSession defaults agent from stored session", async () => {
     const driver = new MemoryStorage();
     const storage = new SessionPersistenceAdapter(driver);
     const llm = makeLLM(() => [
@@ -2253,19 +2184,18 @@ describe("createSession", () => {
     await createSession({
       sessionId: "session-1",
       llm: { llm, model: TEST_MODEL },
-      workdir: "/original",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/original" }),
       storage: driver,
     });
 
     const resumed = await resumeSession("session-1", {
       llm: { llm, model: TEST_MODEL_2 },
-      env: createMockEnvironment(),
       storage: driver,
     });
 
-    expect(resumed.workdir).toBe("/original");
+    expect(resumed.id).toBe("session-1");
     const stored = await storage.loadSession("session-1");
+    expect(stored!.resumeTurnConfig.agent).toBe("coder");
     expect(stored!.resumeTurnConfig.model).toEqual({ provider: "test", model: "mock-2" });
   });
 
@@ -2279,8 +2209,7 @@ describe("createSession", () => {
     const parent = await createSession({
       sessionId: "parent",
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
     await parent.prompt("hello");
@@ -2305,8 +2234,7 @@ describe("createSession", () => {
     const parent = await createSession({
       sessionId: "parent",
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
     await parent.prompt("hello");
@@ -2316,7 +2244,6 @@ describe("createSession", () => {
 
     const resumed = await resumeSession("child", {
       llm: { llm, model: TEST_MODEL },
-      env: createMockEnvironment(),
       storage: driver,
     });
 
@@ -2334,22 +2261,19 @@ describe("createSession", () => {
     await createSession({
       sessionId: "session-a",
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
     await createSession({
       sessionId: "session-b",
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
 
     const sessions = await listSessions(driver);
     expect(sessions.map((s) => s.id)).toEqual(expect.arrayContaining(["session-a", "session-b"]));
     expect(sessions).toHaveLength(2);
-    expect(sessions[0]!.workdir).toBe("/project");
     expect(sessions[0]!.agent).toBe("coder");
   });
 
@@ -2363,8 +2287,7 @@ describe("createSession", () => {
     const parent = await createSession({
       sessionId: "parent",
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
     await parent.prompt("hello");
@@ -2393,15 +2316,13 @@ describe("createSession", () => {
     await createSession({
       sessionId: "session-1",
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
 
     const info = await getSessionInfo(driver, "session-1");
     expect(info).not.toBeNull();
     expect(info!.id).toBe("session-1");
-    expect(info!.workdir).toBe("/project");
     expect(info!.agent).toBe("coder");
     expect(info!.model).toEqual({ provider: "test", model: "mock-1" });
     expect(info!.parentSessionId).toBeUndefined();

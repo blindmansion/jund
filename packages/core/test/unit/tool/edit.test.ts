@@ -1,18 +1,20 @@
 import { describe, test, expect } from "bun:test";
-import { editTool, normalizeEditArgs } from "../../../src/tool/edit.ts";
+import { createEditTool, normalizeEditArgs } from "../../../src/tool/edit.ts";
 import { createMockEnvironment, createToolContext } from "../../test-helpers.ts";
 
 function setup(files: Record<string, string> = {}) {
   const env = createMockEnvironment(files);
-  const ctx = createToolContext({ env });
-  return { tool: editTool, ctx, env };
+  const tool = createEditTool(env, { workdir: "/project" });
+  const ctx = createToolContext();
+  return { tool, ctx, env };
 }
 
 describe("editTool", () => {
   test("has correct id and metadata", () => {
-    expect(editTool.id).toBe("edit");
-    expect(editTool.promptSnippet).toBeDefined();
-    expect(editTool.prepareArgs).toBe(normalizeEditArgs);
+    const { tool } = setup();
+    expect(tool.id).toBe("edit");
+    expect(tool.promptSnippet).toBeDefined();
+    expect(tool.prepareArgs).toBe(normalizeEditArgs);
   });
 
   test("applies a single edit", async () => {

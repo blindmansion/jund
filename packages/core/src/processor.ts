@@ -1,7 +1,6 @@
 import {
   AgentError,
   type AssistantMessage,
-  type Environment,
   type ModelRef,
   type ToolCallPart,
 } from "./types.ts";
@@ -237,8 +236,6 @@ export interface ProcessTurnOptions {
   tools: LLMToolDef[];
   toolMap: Map<string, ToolDef>;
   sessionId: string;
-  workdir: string;
-  env: Environment;
   spawnSubagent?: ToolContext["spawnSubagent"];
   agent: string;
   model: ModelRef;
@@ -297,9 +294,7 @@ async function executeModelTool(
     args,
     ctx: {
       sessionId: options.sessionId,
-      workdir: options.workdir,
       abort: options.abort,
-      env: options.env,
       spawnSubagent: options.spawnSubagent,
       onUpdate(partial) {
         if (partial.output) {

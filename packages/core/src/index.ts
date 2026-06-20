@@ -60,7 +60,7 @@ export { ToolRegistry, buildToolMap, filterToolsForAgent, toLLMTool } from "./to
 
 export { executeToolWithHooks } from "./tool/hooks.ts";
 
-export { FileMutationQueue, executeToolWithQueue, getBuiltInMutationPath } from "./tool/queue.ts";
+export { FileMutationQueue, executeToolWithQueue } from "./tool/queue.ts";
 
 // ── Event types ─────────────────────────────────────────────────────────────
 
@@ -128,13 +128,17 @@ export { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT } from "./prompt.ts";
 
 // ── Built-in tools ──────────────────────────────────────────────────────────
 
-export { readTool } from "./tool/read.ts";
+export { createReadTool } from "./tool/read.ts";
 
-export { writeTool } from "./tool/write.ts";
+export { createWriteTool } from "./tool/write.ts";
 
-export { editTool, normalizeEditArgs } from "./tool/edit.ts";
+export { createEditTool, normalizeEditArgs } from "./tool/edit.ts";
 
-export { bashTool } from "./tool/bash.ts";
+export { createBashTool } from "./tool/bash.ts";
+
+export type { FileToolOptions } from "./tool/coder.ts";
+
+export { createCoderTools, workdirGuideline } from "./tool/coder.ts";
 
 export type { TaskParams } from "./tool/task.ts";
 

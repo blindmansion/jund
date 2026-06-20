@@ -90,7 +90,6 @@ describe.skipIf(!canRun)("PgStorage", () => {
     const now = Date.now();
     const session = await storage.createSession({
       id: "pg-test-session-1",
-      workdir: "/tmp/pg-test",
       createdAt: now,
       updatedAt: now,
       agent: "test-agent",
@@ -100,7 +99,6 @@ describe.skipIf(!canRun)("PgStorage", () => {
 
     const loaded = await storage.loadSession("pg-test-session-1");
     expect(loaded).not.toBeNull();
-    expect(loaded!.workdir).toBe("/tmp/pg-test");
     expect(loaded!.resumeTurnConfig.agent).toBe("test-agent");
   });
 });

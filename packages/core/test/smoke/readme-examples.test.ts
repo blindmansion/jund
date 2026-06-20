@@ -22,6 +22,7 @@ import {
   FileMutationQueue,
   generateId,
   toLLMMessages,
+  createCoderTools,
 } from "../../src/index.ts";
 import { Bash, ReadWriteFs } from "just-bash";
 import { createAISDKProvider } from "../../src/adapters/ai-sdk.ts";
@@ -70,8 +71,7 @@ describe("README: Quick start", () => {
 
     const session = await createSession({
       llm: { llm: makeMockLLM(), model: TEST_MODEL },
-      workdir: "/",
-      env: { fs, shell },
+      tools: createCoderTools({ fs, shell }, { workdir: "/" }),
       onEvent: (event) => {
         expect(event.type).toBeDefined();
       },
@@ -171,13 +171,10 @@ describe("README: Session interface", () => {
   test("Session exposes all documented properties and methods", async () => {
     const session = await createSession({
       llm: { llm: makeMockLLM(), model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
     });
 
     expect(typeof session.id).toBe("string");
     expect(session.model).toEqual(TEST_MODEL);
-    expect(session.workdir).toBe("/project");
     expect(typeof session.isStreaming).toBe("boolean");
     expect(typeof session.prompt).toBe("function");
     expect(typeof session.cancel).toBe("function");
@@ -198,8 +195,6 @@ describe("README: Events", () => {
 
     const session = await createSession({
       llm: { llm: makeMockLLM(), model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
       onEvent: (event) => {
         seen.add(event.type);
       },
@@ -219,8 +214,6 @@ describe("README: Context compaction", () => {
   test("compaction can be disabled", async () => {
     const session = await createSession({
       llm: { llm: makeMockLLM(), model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
       compaction: false,
     });
 
@@ -233,8 +226,6 @@ describe("README: Context compaction", () => {
 
     const session = await createSession({
       llm: { llm: makeMockLLM(), model: { ...TEST_MODEL, contextLimit: 10 } },
-      workdir: "/project",
-      env: createMockEnvironment(),
       compaction: {
         threshold: 0.8,
         strategy: async (messages) => {
@@ -270,8 +261,6 @@ describe("README: Persistence", () => {
     const session = await createSession({
       storage: driver,
       llm: { llm: makeMockLLM(), model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
     });
 
     await session.prompt("Hello");
@@ -329,8 +318,6 @@ describe("README: Lower-level primitives", () => {
       tools: [],
       toolMap: new Map(),
       sessionId: "test",
-      workdir: "/project",
-      env: createMockEnvironment(),
       agent: "coder",
       model: { provider: "test", model: "mock" },
       abort: new AbortController().signal,
@@ -346,7 +333,6 @@ describe("README: Lower-level primitives", () => {
     const prompt = buildSystemPrompt({
       agentPrompt: "You are a helpful assistant.",
       tools: [],
-      workdir: "/project",
     });
     expect(typeof prompt).toBe("string");
     expect(prompt.length).toBeGreaterThan(0);
@@ -379,8 +365,6 @@ describe("README: createSession options", () => {
   test("toolExecution: parallel", async () => {
     const session = await createSession({
       llm: { llm: makeMockLLM(), model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
       toolExecution: "parallel",
     });
 
@@ -391,8 +375,6 @@ describe("README: createSession options", () => {
   test("toolExecution: sequential", async () => {
     const session = await createSession({
       llm: { llm: makeMockLLM(), model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
       toolExecution: "sequential",
     });
 
@@ -421,8 +403,6 @@ describe("README: createSession options", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
       retry: { maxAttempts: 2, maxDelayMs: 0 },
     });
 
@@ -443,8 +423,6 @@ describe("README: createSession options", () => {
 
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
       systemPrompt: "You are a helpful coding assistant.",
     });
 
@@ -458,8 +436,6 @@ describe("README: createSession options", () => {
 
     const session = await createSession({
       llm: { llm: makeMockLLM(), model: TEST_MODEL },
-      workdir: "/project",
-      env: createMockEnvironment(),
       beforeInput: async () => {
         hooksCalled.add("beforeInput");
         return undefined;

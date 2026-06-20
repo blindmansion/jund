@@ -131,9 +131,7 @@ export function runningToolCall(tool: string, input: unknown): ToolCallPart {
 export function createToolContext(overrides?: Partial<ToolContext>): ToolContext {
   return {
     sessionId: "test-session",
-    workdir: "/project",
     abort: new AbortController().signal,
-    env: createMockEnvironment(),
     onUpdate: () => {},
     ...overrides,
   };

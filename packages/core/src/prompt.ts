@@ -7,7 +7,6 @@ export const DEFAULT_SYSTEM_PROMPT = defaultSystemPromptTemplate.trim();
 export interface BuildSystemPromptOptions {
   agentPrompt: string;
   tools: ToolDef[];
-  workdir: string;
   appendPrompt?: string;
   now?: Date;
 }
@@ -44,7 +43,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
   }
 
   const now = options.now ?? new Date();
-  sections.push(`Date: ${now.toDateString()}\nWorking directory: ${options.workdir}`);
+  sections.push(`Date: ${now.toDateString()}`);
 
   return sections.join("\n\n");
 }

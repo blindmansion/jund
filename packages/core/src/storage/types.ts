@@ -6,7 +6,6 @@ export interface SessionMetadata {
   id: string;
   model: ModelRef;
   agent: string;
-  workdir: string;
   createdAt: number;
   updatedAt: number;
   parentSessionId?: string;
@@ -34,7 +33,6 @@ export interface ResumeTurnConfig {
  */
 export interface Session {
   id: string;
-  workdir: string;
   createdAt: number;
   updatedAt: number;
   parentSessionId?: string;

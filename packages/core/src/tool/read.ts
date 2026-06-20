@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { ToolDef, ToolContext, ToolResult } from "./types.ts";
+import type { Environment } from "../types.ts";
 import { resolvePath } from "../util/path.ts";
+import { workdirGuideline, type FileToolOptions } from "./file-tool.ts";
 
 const ReadParams = z.object({
   path: z.string().describe("Absolute or relative path to the file or directory"),
@@ -10,58 +12,64 @@ const ReadParams = z.object({
 
 type ReadParams = z.infer<typeof ReadParams>;
 
-export const readTool: ToolDef<ReadParams> = {
-  id: "read",
-  description: "Read a file's contents with line numbers, or list a directory's entries.",
-  parameters: ReadParams,
+export function createReadTool(env: Environment, options: FileToolOptions): ToolDef<ReadParams> {
+  const { workdir } = options;
+  return {
+    id: "read",
+    description: "Read a file's contents with line numbers, or list a directory's entries.",
+    parameters: ReadParams,
 
-  promptSnippet: "read — Read files (with line numbers) or list directory contents.",
-  promptGuidelines: ["Use offset and limit for large files instead of reading the entire file."],
+    promptSnippet: "read — Read files (with line numbers) or list directory contents.",
+    promptGuidelines: [
+      "Use offset and limit for large files instead of reading the entire file.",
+      workdirGuideline(workdir),
+    ],
 
-  async execute(params: ReadParams, ctx: ToolContext): Promise<ToolResult> {
-    const fs = ctx.env.fs;
-    const fullPath = resolvePath(ctx.workdir, params.path);
+    async execute(params: ReadParams, _ctx: ToolContext): Promise<ToolResult> {
+      const fs = env.fs;
+      const fullPath = resolvePath(workdir, params.path);
 
-    if (!(await fs.exists(fullPath))) {
-      throw new Error(`File not found: ${params.path}`);
-    }
+      if (!(await fs.exists(fullPath))) {
+        throw new Error(`File not found: ${params.path}`);
+      }
 
-    const info = await fs.stat(fullPath);
+      const info = await fs.stat(fullPath);
 
-    if (info.isDirectory) {
-      const entries = await fs.readdir(fullPath);
+      if (info.isDirectory) {
+        const entries = await fs.readdir(fullPath);
+        return {
+          output: entries.length > 0 ? entries.join("\n") : "(empty directory)",
+          title: `Listed ${entries.length} entries in ${params.path}`,
+          metadata: { path: fullPath, type: "directory", count: entries.length },
+        };
+      }
+
+      const content = await fs.readFile(fullPath);
+      const allLines = content.split("\n");
+
+      const start = (params.offset ?? 1) - 1;
+      const end = params.limit ? start + params.limit : allLines.length;
+      const slice = allLines.slice(start, end);
+
+      const numbered = slice
+        .map((line, i) => `${String(start + i + 1).padStart(6)}|${line}`)
+        .join("\n");
+
+      const hasRange = params.offset != null || params.limit != null;
+      const rangeInfo = hasRange
+        ? ` (lines ${start + 1}-${start + slice.length} of ${allLines.length})`
+        : "";
+
       return {
-        output: entries.length > 0 ? entries.join("\n") : "(empty directory)",
-        title: `Listed ${entries.length} entries in ${params.path}`,
-        metadata: { path: fullPath, type: "directory", count: entries.length },
+        output: numbered,
+        title: `${params.path}${rangeInfo}`,
+        metadata: {
+          path: fullPath,
+          type: "file",
+          lines: slice.length,
+          totalLines: allLines.length,
+        },
       };
-    }
-
-    const content = await fs.readFile(fullPath);
-    const allLines = content.split("\n");
-
-    const start = (params.offset ?? 1) - 1;
-    const end = params.limit ? start + params.limit : allLines.length;
-    const slice = allLines.slice(start, end);
-
-    const numbered = slice
-      .map((line, i) => `${String(start + i + 1).padStart(6)}|${line}`)
-      .join("\n");
-
-    const hasRange = params.offset != null || params.limit != null;
-    const rangeInfo = hasRange
-      ? ` (lines ${start + 1}-${start + slice.length} of ${allLines.length})`
-      : "";
-
-    return {
-      output: numbered,
-      title: `${params.path}${rangeInfo}`,
-      metadata: {
-        path: fullPath,
-        type: "file",
-        lines: slice.length,
-        totalLines: allLines.length,
-      },
-    };
-  },
-};
+    },
+  };
+}

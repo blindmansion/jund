@@ -55,7 +55,6 @@ const SQL = {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
@@ -183,7 +182,6 @@ const SQL = {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
@@ -199,7 +197,6 @@ const SQL = {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
@@ -216,7 +213,6 @@ const SQL = {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
@@ -359,11 +355,10 @@ export class DurableObjectSqliteStorage implements SessionStorageDriver, Session
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       session.id,
       session.parentSessionId ?? null,
       session.branchedFromMessageId ?? null,
@@ -373,7 +368,6 @@ export class DurableObjectSqliteStorage implements SessionStorageDriver, Session
       session.resumeTurnConfig.model.provider,
       session.resumeTurnConfig.model.model,
       session.resumeTurnConfig.agent,
-      session.workdir,
       JSON.stringify(session.metadata ?? null),
       session.createdAt,
       session.updatedAt,
@@ -401,7 +395,6 @@ export class DurableObjectSqliteStorage implements SessionStorageDriver, Session
         resume_model_provider = ?,
         resume_model_id = ?,
         resume_agent = ?,
-        workdir = ?,
         metadata_json = ?,
         created_at = ?,
         updated_at = ?
@@ -414,7 +407,6 @@ export class DurableObjectSqliteStorage implements SessionStorageDriver, Session
       session.resumeTurnConfig.model.provider,
       session.resumeTurnConfig.model.model,
       session.resumeTurnConfig.agent,
-      session.workdir,
       JSON.stringify(session.metadata ?? null),
       session.createdAt,
       session.updatedAt,

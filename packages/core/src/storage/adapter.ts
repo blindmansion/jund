@@ -416,7 +416,6 @@ function assertTurnBelongsToSession(turn: Turn, sessionId: string): void {
 function sessionFromMetadata(metadata: SessionMetadata): Session {
   return {
     id: metadata.id,
-    workdir: metadata.workdir,
     createdAt: metadata.createdAt,
     updatedAt: metadata.updatedAt,
     parentSessionId: metadata.parentSessionId,

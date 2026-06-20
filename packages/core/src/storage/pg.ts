@@ -48,7 +48,6 @@ CREATE TABLE IF NOT EXISTS sessions (
   resume_model_provider TEXT NOT NULL,
   resume_model_id TEXT NOT NULL,
   resume_agent TEXT NOT NULL,
-  workdir TEXT NOT NULL,
   metadata_json TEXT,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
@@ -115,7 +114,6 @@ const SQL = {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
@@ -131,7 +129,6 @@ const SQL = {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
@@ -148,11 +145,10 @@ const SQL = {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
   sessionUpdate: `UPDATE sessions
       SET
         parent_session_id = $1,
@@ -163,11 +159,10 @@ const SQL = {
         resume_model_provider = $6,
         resume_model_id = $7,
         resume_agent = $8,
-        workdir = $9,
-        metadata_json = $10,
-        created_at = $11,
-        updated_at = $12
-      WHERE id = $13`,
+        metadata_json = $9,
+        created_at = $10,
+        updated_at = $11
+      WHERE id = $12`,
 
   turnRead: `SELECT
         id,
@@ -343,7 +338,6 @@ const SQL = {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
@@ -359,7 +353,6 @@ const SQL = {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
@@ -376,7 +369,6 @@ const SQL = {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
@@ -419,7 +411,6 @@ function normalizeSessionRow(row: Record<string, unknown>): SessionSqlRow {
     resume_model_provider: row.resume_model_provider as string,
     resume_model_id: row.resume_model_id as string,
     resume_agent: row.resume_agent as string,
-    workdir: row.workdir as string,
     metadata_json: (row.metadata_json as string | null) ?? null,
     created_at: asInt(row.created_at),
     updated_at: asInt(row.updated_at),
@@ -608,7 +599,6 @@ class PgSessionTxn implements SessionStorageTxn {
       session.resumeTurnConfig.model.provider,
       session.resumeTurnConfig.model.model,
       session.resumeTurnConfig.agent,
-      session.workdir,
       JSON.stringify(session.metadata ?? null),
       session.createdAt,
       session.updatedAt,
@@ -637,7 +627,6 @@ class PgSessionTxn implements SessionStorageTxn {
       session.resumeTurnConfig.model.provider,
       session.resumeTurnConfig.model.model,
       session.resumeTurnConfig.agent,
-      session.workdir,
       JSON.stringify(session.metadata ?? null),
       session.createdAt,
       session.updatedAt,

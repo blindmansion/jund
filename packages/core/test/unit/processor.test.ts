@@ -5,7 +5,6 @@ import { FileMutationQueue } from "../../src/tool/queue.ts";
 import type { AgentEvent } from "../../src/events.ts";
 import type { LLMProvider, LLMRequest, LLMStreamEvent } from "../../src/llm.ts";
 import type { ToolDef } from "../../src/tool/types.ts";
-import { createMockEnvironment } from "../test-helpers.ts";
 
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -48,8 +47,6 @@ function baseOptions(
     tools: [],
     toolMap: new Map(),
     sessionId: "session-1",
-    workdir: "/project",
-    env: createMockEnvironment(),
     agent: "coder",
     model: { provider: "test", model: "mock-1" },
     abort: new AbortController().signal,
@@ -255,10 +252,11 @@ describe("processTurn", () => {
   test("serializes conflicting write operations through the file mutation queue", async () => {
     const firstGate = deferred<void>();
     const order: string[] = [];
-    const writeTool: ToolDef = {
+    const writeTool: ToolDef<{ path: string }> = {
       id: "write",
       description: "write file",
       parameters: z.object({ path: z.string() }),
+      mutationKey: (args) => args.path,
       async execute(args) {
         order.push(`${args.path}:start`);
         if (args.path === "a.ts") {

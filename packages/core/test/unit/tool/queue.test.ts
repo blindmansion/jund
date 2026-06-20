@@ -1,11 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import { createToolContext } from "../../test-helpers.ts";
-import {
-  executeToolWithQueue,
-  FileMutationQueue,
-  getBuiltInMutationPath,
-} from "../../../src/tool/queue.ts";
+import { executeToolWithQueue, FileMutationQueue } from "../../../src/tool/queue.ts";
 import type { ToolDef } from "../../../src/tool/types.ts";
 
 function deferred<T>() {
@@ -16,13 +12,18 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-function makeTool(id: string, execute: ToolDef["execute"]): ToolDef<{ path: string }> {
+function makeTool(
+  id: string,
+  execute: ToolDef<{ path: string }>["execute"],
+  mutationKey?: (args: { path: string }) => string | undefined,
+): ToolDef<{ path: string }> {
   return {
     id,
     description: `${id} tool`,
     parameters: z.object({
       path: z.string(),
     }),
+    mutationKey,
     execute,
   };
 }
@@ -75,60 +76,50 @@ describe("FileMutationQueue", () => {
     expect(order.slice(0, 2).sort()).toEqual(["a:start", "b:start"]);
   });
 
-  test("default mutation path only applies to built-in mutating tools", () => {
-    const ctx = createToolContext({ workdir: "/project" });
-
-    expect(
-      getBuiltInMutationPath(
-        makeTool("write", async () => ({ output: "ok" })),
-        { path: "a.ts" },
-        ctx,
-      ),
-    ).toBe("/project/a.ts");
-    expect(
-      getBuiltInMutationPath(
-        makeTool("edit", async () => ({ output: "ok" })),
-        { path: "a.ts" },
-        ctx,
-      ),
-    ).toBe("/project/a.ts");
-    expect(
-      getBuiltInMutationPath(
-        makeTool("read", async () => ({ output: "ok" })),
-        { path: "a.ts" },
-        ctx,
-      ),
-    ).toBe(undefined);
-  });
-
-  test("executeToolWithQueue wraps tool execution", async () => {
+  test("tools without a mutationKey run unserialized", async () => {
     const queue = new FileMutationQueue();
     const order: string[] = [];
     const firstGate = deferred<void>();
-    const tool = makeTool("write", async (args) => {
-      order.push(`run:${args.path}`);
+    const tool = makeTool("read", async (args) => {
+      order.push(`start:${args.path}`);
       if (args.path === "a.ts") {
         await firstGate.promise;
       }
+      order.push(`end:${args.path}`);
       return { output: args.path };
     });
-    const ctx = createToolContext({ workdir: "/project" });
+    const ctx = createToolContext();
 
-    const first = executeToolWithQueue({
-      tool,
-      args: { path: "a.ts" },
-      ctx,
-      queue,
-      resolvePath: () => "/project/shared.ts",
-    });
+    const first = executeToolWithQueue({ tool, args: { path: "a.ts" }, ctx, queue });
+    const second = executeToolWithQueue({ tool, args: { path: "b.ts" }, ctx, queue });
 
-    const second = executeToolWithQueue({
-      tool,
-      args: { path: "b.ts" },
-      ctx,
-      queue,
-      resolvePath: () => "/project/shared.ts",
-    });
+    await Promise.resolve();
+    // No mutationKey → both start without waiting on each other.
+    expect(order).toEqual(["start:a.ts", "start:b.ts", "end:b.ts"]);
+
+    firstGate.resolve();
+    await Promise.all([first, second]);
+  });
+
+  test("executeToolWithQueue serializes calls with the same mutationKey", async () => {
+    const queue = new FileMutationQueue();
+    const order: string[] = [];
+    const firstGate = deferred<void>();
+    const tool = makeTool(
+      "write",
+      async (args) => {
+        order.push(`run:${args.path}`);
+        if (args.path === "a.ts") {
+          await firstGate.promise;
+        }
+        return { output: args.path };
+      },
+      () => "/project/shared.ts",
+    );
+    const ctx = createToolContext();
+
+    const first = executeToolWithQueue({ tool, args: { path: "a.ts" }, ctx, queue });
+    const second = executeToolWithQueue({ tool, args: { path: "b.ts" }, ctx, queue });
 
     await Promise.resolve();
     expect(order).toEqual(["run:a.ts"]);

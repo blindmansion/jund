@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { anthropic } from "@ai-sdk/anthropic";
 import { createAISDKProvider } from "../src/adapters/ai-sdk.ts";
 import {
+  createCoderTools,
   createSession,
   getAssistantText,
   type Environment,
@@ -66,11 +67,7 @@ function createMemoryEnvironment(files: Record<string, string>): Environment {
 
 async function runPlainTextScenario(llm: LLMProviderWithModel): Promise<void> {
   console.log("\n[plain-text] starting");
-  const session = await createSession({
-    llm,
-    workdir: "/project",
-    env: createMemoryEnvironment({}),
-  });
+  const session = await createSession({ llm });
 
   const result = await session.prompt("Reply with a short greeting.");
   const text = getAssistantText(result).trim();
@@ -84,10 +81,12 @@ async function runToolScenario(llm: LLMProviderWithModel): Promise<void> {
   console.log("\n[tool-loop] starting");
   const session = await createSession({
     llm,
-    workdir: "/project",
-    env: createMemoryEnvironment({
-      "/project/note.txt": "hello from the smoke test",
-    }),
+    tools: createCoderTools(
+      createMemoryEnvironment({
+        "/project/note.txt": "hello from the smoke test",
+      }),
+      { workdir: "/project" },
+    ),
     systemPrompt: "When asked about a file, use the read tool before answering.",
   });
 
@@ -113,10 +112,12 @@ async function runSubagentScenario(llm: LLMProviderWithModel): Promise<void> {
   console.log("\n[subagent] starting");
   const session = await createSession({
     llm,
-    workdir: "/project",
-    env: createMemoryEnvironment({
-      "/project/note.txt": "delegated hello from the smoke test",
-    }),
+    tools: createCoderTools(
+      createMemoryEnvironment({
+        "/project/note.txt": "delegated hello from the smoke test",
+      }),
+      { workdir: "/project" },
+    ),
     systemPrompt:
       "When a focused read-only lookup is enough, delegate with the task tool and let the explorer subagent inspect files.",
   });

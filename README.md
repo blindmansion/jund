@@ -32,7 +32,12 @@ import Database from "better-sqlite3";
 import { Bash, ReadWriteFs } from "just-bash";
 import { anthropic } from "@ai-sdk/anthropic";
 import { createAISDKProvider } from "@jund/core/ai-sdk";
-import { createSession, getAssistantText, BetterSqlite3Storage } from "@jund/core";
+import {
+  createSession,
+  createCoderTools,
+  getAssistantText,
+  BetterSqlite3Storage,
+} from "@jund/core";
 
 const fs = new ReadWriteFs({ root: "./my-project" });
 const shell = new Bash({ fs, cwd: "/" });
@@ -49,8 +54,8 @@ const llm = createAISDKProvider({
 
 const session = await createSession({
   llm,
-  workdir: "/",
-  env: { fs, shell },
+  // File/shell tools are produced from your environment and passed in.
+  tools: createCoderTools({ fs, shell }, { workdir: "/" }),
   storage,
   onEvent: (event) => console.log(event.type),
 });
@@ -77,9 +82,7 @@ Creates a stateful agent session. Key options:
 | Option          | Type                            | Description                                        |
 | --------------- | ------------------------------- | -------------------------------------------------- |
 | `llm`           | `LLMProviderWithModel`          | LLM backend + model metadata (use an adapter)      |
-| `workdir`       | `string`                        | Root working directory exposed to tools            |
-| `env`           | `Environment`                   | `{ fs: FileSystem; shell: ShellOps }`              |
-| `tools`         | `ToolDef[]`                     | Additional tools beyond the built-ins              |
+| `tools`         | `ToolDef[]`                     | Tools available to the agent (e.g. `createCoderTools`) |
 | `systemPrompt`  | `string`                        | Prepended to the default system prompt             |
 | `toolExecution` | `"parallel" \| "sequential"`    | How tool calls in a single step run                |
 | `onEvent`       | `EventHandler`                  | Stream of `AgentEvent`s (deltas, tool calls, etc.) |
@@ -97,7 +100,6 @@ interface Session {
   readonly parentId: string | undefined;
   readonly branchedFromMessageId: string | undefined;
   readonly model: ModelInfo;
-  readonly workdir: string;
   readonly isStreaming: boolean;
   prompt(input: string | UserPart[]): Promise<AssistantMessage>;
   cancel(): void;
@@ -115,14 +117,15 @@ interface Session {
 ### `resumeSession(sessionId, options): Promise<Session>`
 
 Resumes an existing persisted session. Throws if the session does not exist.
-Runtime dependencies (`llm`, `env`, `storage`) are required; `workdir` and
-`defaultAgent` default from the stored session state.
+Runtime dependencies (`llm`, `storage`) are required; `defaultAgent` defaults
+from the stored session state. Re-supply the toolset (e.g. `createCoderTools`)
+the same way you did when creating the session.
 
 ```typescript
 const session = await resumeSession("session-123", {
   llm,
-  env,
   storage,
+  tools: createCoderTools({ fs, shell }, { workdir: "/" }),
 });
 ```
 
@@ -136,20 +139,35 @@ const branches = await listBranches(storage, parentSessionId);
 const info = await getSessionInfo(storage, sessionId);
 ```
 
-Each returns `SessionInfo` objects with `id`, `workdir`, `parentSessionId`,
+Each returns `SessionInfo` objects with `id`, `parentSessionId`,
 `branchedFromMessageId`, `model`, `agent`, and timestamps.
 
-### Built-in tools
+### Tools
 
-| Tool        | Description                            |
-| ----------- | -------------------------------------- |
-| `readTool`  | Read file contents                     |
-| `writeTool` | Write / create files                   |
-| `editTool`  | Apply targeted edits to existing files |
-| `bashTool`  | Execute shell commands                 |
-| `taskTool`  | Spawn sub-agent sessions               |
+Filesystem and shell access are provided as ordinary tools rather than baked
+into the session. Build them from an `Environment` with `createCoderTools`, or
+use the individual factories for finer control:
 
-All tools are registered by default; override with `tools` or `setTools`.
+| Factory                                   | Description                            |
+| ----------------------------------------- | -------------------------------------- |
+| `createCoderTools(env, { workdir })`      | Read/write/edit/bash bound to `env`    |
+| `createReadTool(env, { workdir })`        | Read file contents                     |
+| `createWriteTool(env, { workdir })`       | Write / create files                   |
+| `createEditTool(env, { workdir })`        | Apply targeted edits to existing files |
+| `createBashTool(env, { workdir })`        | Execute shell commands                 |
+
+```typescript
+import { createCoderTools } from "@jund/core";
+
+const tools = createCoderTools({ fs, shell }, { workdir: "/" });
+const session = await createSession({ llm, tools });
+```
+
+`taskTool` (spawn sub-agent sessions) is the only tool the session installs
+automatically for primary agents. Pass extra tools via `tools`, or replace the
+whole set at runtime with `setTools`. Tools that mutate state (e.g. `write`,
+`edit`) declare a `mutationKey`; the runtime serializes calls sharing a key so
+concurrent writes to the same file can't race.
 
 ## LLM provider adapters
 
@@ -255,9 +273,9 @@ import { resumeSession } from "@jund/core";
 
 const session = await resumeSession("session-123", {
   llm,
-  env: { fs, shell },
   storage,
-  // workdir and defaultAgent default from stored session
+  tools: createCoderTools({ fs, shell }, { workdir: "/" }),
+  // defaultAgent defaults from stored session
 });
 
 // Conversation history is restored automatically

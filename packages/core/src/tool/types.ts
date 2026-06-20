@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import type { LLMMessage, LLMProvider, LLMToolDef, ModelInfo } from "../llm.ts";
-import type { AssistantMessage, Environment, Message, UserPart } from "../types.ts";
+import type { AssistantMessage, Message, UserPart } from "../types.ts";
 
 // ── Tool definition ─────────────────────────────────────────────────────────
 
@@ -14,14 +14,19 @@ export interface ToolDef<Params = any> {
 
   prepareArgs?: (args: unknown) => unknown;
 
+  /**
+   * If set and it returns a key, the runtime serializes execution of calls that
+   * resolve to the same key. Used to prevent concurrent mutations of the same
+   * resource (e.g. two writes to one file) during parallel tool execution.
+   */
+  mutationKey?: (params: Params) => string | undefined;
+
   execute(params: Params, ctx: ToolContext): Promise<ToolResult>;
 }
 
 export interface ToolContext {
   sessionId: string;
-  workdir: string;
   abort: AbortSignal;
-  env: Environment;
   onUpdate(partial: ToolResult): void;
   spawnSubagent?: (input: {
     prompt: string;
@@ -61,7 +66,6 @@ export type CompactionReason = "proactive" | "reactive" | "manual";
 
 export interface CompactionContext {
   sessionId: string;
-  workdir: string;
   llm: LLMProvider;
   model: ModelInfo;
   agent: string;

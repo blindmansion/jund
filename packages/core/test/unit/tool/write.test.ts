@@ -1,17 +1,19 @@
 import { describe, test, expect } from "bun:test";
-import { writeTool } from "../../../src/tool/write.ts";
+import { createWriteTool } from "../../../src/tool/write.ts";
 import { createMockEnvironment, createToolContext } from "../../test-helpers.ts";
 
 function setup(files: Record<string, string> = {}) {
   const env = createMockEnvironment(files);
-  const ctx = createToolContext({ env });
-  return { tool: writeTool, ctx, env };
+  const tool = createWriteTool(env, { workdir: "/project" });
+  const ctx = createToolContext();
+  return { tool, ctx, env };
 }
 
 describe("writeTool", () => {
   test("has correct id and metadata", () => {
-    expect(writeTool.id).toBe("write");
-    expect(writeTool.promptSnippet).toBeDefined();
+    const { tool } = setup();
+    expect(tool.id).toBe("write");
+    expect(tool.promptSnippet).toBeDefined();
   });
 
   test("creates a new file", async () => {

@@ -13,11 +13,7 @@ import { processTurn } from "./processor.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import { ToolRegistry, buildToolMap, filterToolsForAgent, toLLMTool } from "./tool/registry.ts";
 import { FileMutationQueue } from "./tool/queue.ts";
-import { bashTool } from "./tool/bash.ts";
-import { editTool } from "./tool/edit.ts";
-import { readTool } from "./tool/read.ts";
 import { taskTool } from "./tool/task.ts";
-import { writeTool } from "./tool/write.ts";
 import type {
   AfterToolCallHook,
   BeforeBranchHook,
@@ -35,7 +31,6 @@ import type {
 import {
   AgentError,
   type AssistantMessage,
-  type Environment,
   type Message,
   type ModelRef,
   type UserPart,
@@ -54,8 +49,6 @@ export interface SessionOptions {
   llm: LLMProviderWithModel;
   agents?: AgentConfig[];
   defaultAgent?: string;
-  workdir: string;
-  env: Environment;
   tools?: ToolDef[];
   systemPrompt?: string;
   maxOutputChars?: number;
@@ -80,9 +73,7 @@ export interface BranchOptions {
 
 export interface ResumeOptions {
   llm: LLMProviderWithModel;
-  env: Environment;
   storage: SessionStorageDriver;
-  workdir?: string;
   defaultAgent?: string;
   agents?: AgentConfig[];
   tools?: ToolDef[];
@@ -104,7 +95,6 @@ export interface ResumeOptions {
 
 export interface SessionInfo {
   id: string;
-  workdir: string;
   parentSessionId: string | undefined;
   branchedFromMessageId: string | undefined;
   model: ModelRef;
@@ -137,7 +127,6 @@ export interface Session {
   setLLM(llm: LLMProviderWithModel): Promise<void>;
   readonly isStreaming: boolean;
   readonly model: ModelInfo;
-  readonly workdir: string;
 }
 
 function shouldInstallTaskTool(agent: AgentConfig): boolean {
@@ -151,11 +140,7 @@ function shouldInstallTaskTool(agent: AgentConfig): boolean {
 }
 
 function getBuiltInTools(agent: AgentConfig): ToolDef[] {
-  const tools: ToolDef[] = [readTool, writeTool, editTool, bashTool];
-  if (shouldInstallTaskTool(agent)) {
-    tools.push(taskTool);
-  }
-  return tools;
+  return shouldInstallTaskTool(agent) ? [taskTool] : [];
 }
 
 function buildAgentMap(customAgents: AgentConfig[] = []): Map<string, AgentConfig> {
@@ -220,7 +205,6 @@ function makeSessionMetadata(options: {
   sessionId: string;
   model: ModelInfo;
   agent: string;
-  workdir: string;
   parentSessionId?: string;
   branchedFromMessageId?: string;
 }): SessionMetadata {
@@ -229,7 +213,6 @@ function makeSessionMetadata(options: {
     id: options.sessionId,
     model: toMessageModel(options.model),
     agent: options.agent,
-    workdir: options.workdir,
     createdAt: now,
     updatedAt: now,
     parentSessionId: options.parentSessionId,
@@ -259,7 +242,6 @@ async function initializeSessionState(
     sessionId,
     model: options.llm.model,
     agent: agentName,
-    workdir: options.workdir,
   });
   await storage.createSession(meta);
   return { sessionId, messages: [] };
@@ -413,7 +395,6 @@ async function createSessionInternal(
 
     const compacted = await resolved.strategy([...currentMessages], {
       sessionId,
-      workdir: options.workdir,
       llm,
       model,
       agent: activeAgent.name,
@@ -488,7 +469,6 @@ async function createSessionInternal(
           const baseSystemPrompt = buildSystemPrompt({
             agentPrompt: activeAgent.systemPrompt,
             tools: activeTools,
-            workdir: options.workdir,
             appendPrompt: options.systemPrompt,
           });
 
@@ -530,8 +510,6 @@ async function createSessionInternal(
             tools: activeTools.map(toLLMTool),
             toolMap: buildToolMap(activeTools),
             sessionId: session.id,
-            workdir: options.workdir,
-            env: options.env,
             spawnSubagent,
             agent: activeAgent.name,
             model: toMessageModel(model),
@@ -624,7 +602,6 @@ async function createSessionInternal(
         sessionId: branchSessionId,
         model,
         agent: resolveAgent().name,
-        workdir: options.workdir,
         parentSessionId: sessionId,
         branchedFromMessageId: messageId,
       });
@@ -720,7 +697,6 @@ async function createSessionInternal(
             agent: resolveAgent().name,
             model: toMessageModel(next.model),
           },
-          workdir: options.workdir,
         });
         llm = next.llm;
         model = next.model;
@@ -740,9 +716,6 @@ async function createSessionInternal(
     get model() {
       return model;
     },
-    get workdir() {
-      return options.workdir;
-    },
   };
 
   return session;
@@ -759,13 +732,11 @@ export async function resumeSession(sessionId: string, options: ResumeOptions): 
     throw new AgentError(`Session not found: ${sessionId}`, "SESSION_NOT_FOUND");
   }
 
-  const workdir = options.workdir ?? existing.workdir;
   const defaultAgent = options.defaultAgent ?? existing.resumeTurnConfig.agent;
   const agentName = resolveConfiguredAgent(defaultAgent, options.agents).name;
 
   await storage.updateSessionMetadata(sessionId, {
     resumeTurnConfig: { agent: agentName, model: toMessageModel(options.llm.model) },
-    workdir,
   });
 
   const messages = await storage.loadVisibleMessages(sessionId);
@@ -774,8 +745,6 @@ export async function resumeSession(sessionId: string, options: ResumeOptions): 
     {
       sessionId,
       llm: options.llm,
-      env: options.env,
-      workdir,
       defaultAgent,
       agents: options.agents,
       tools: options.tools,
@@ -807,7 +776,6 @@ export async function resumeSession(sessionId: string, options: ResumeOptions): 
 function storageSessionToInfo(session: StorageSession): SessionInfo {
   return {
     id: session.id,
-    workdir: session.workdir,
     parentSessionId: session.parentSessionId,
     branchedFromMessageId: session.branchedFromMessageId,
     model: { ...session.resumeTurnConfig.model },

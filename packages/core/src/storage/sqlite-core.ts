@@ -41,7 +41,6 @@ export interface SessionSqlRow {
   resume_model_provider: string;
   resume_model_id: string;
   resume_agent: string;
-  workdir: string;
   metadata_json: string | null;
   created_at: number;
   updated_at: number;
@@ -116,11 +115,10 @@ export function prepareSessionSqliteStatements(db: {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
     sessionRead: prep(
       `SELECT
@@ -133,7 +131,6 @@ export function prepareSessionSqliteStatements(db: {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
@@ -151,7 +148,6 @@ export function prepareSessionSqliteStatements(db: {
         resume_model_provider = ?,
         resume_model_id = ?,
         resume_agent = ?,
-        workdir = ?,
         metadata_json = ?,
         created_at = ?,
         updated_at = ?
@@ -168,7 +164,6 @@ export function prepareSessionSqliteStatements(db: {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
@@ -186,7 +181,6 @@ export function prepareSessionSqliteStatements(db: {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
@@ -205,7 +199,6 @@ export function prepareSessionSqliteStatements(db: {
         resume_model_provider,
         resume_model_id,
         resume_agent,
-        workdir,
         metadata_json,
         created_at,
         updated_at
@@ -401,7 +394,6 @@ CREATE TABLE IF NOT EXISTS sessions (
   resume_model_provider TEXT NOT NULL,
   resume_model_id TEXT NOT NULL,
   resume_agent TEXT NOT NULL,
-  workdir TEXT NOT NULL,
   metadata_json TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -460,7 +452,6 @@ CREATE INDEX IF NOT EXISTS history_snapshots_by_session
 export function sessionFromSql(row: SessionSqlRow): Session {
   return {
     id: row.id,
-    workdir: row.workdir,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     parentSessionId: row.parent_session_id ?? undefined,

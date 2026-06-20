@@ -145,7 +145,6 @@ describe("defaultCompactionStrategy", () => {
     ];
     const ctx: CompactionContext = {
       sessionId: "session-1",
-      workdir: "/project",
       llm,
       model: {
         id: "test:mock-1",

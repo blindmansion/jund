@@ -3,7 +3,12 @@ import path from "node:path";
 import { Bash, ReadWriteFs } from "just-bash";
 import { anthropic } from "@ai-sdk/anthropic";
 import { createAISDKProvider } from "../src/adapters/ai-sdk.ts";
-import { createSession, getAssistantText, type Environment } from "../src/index.ts";
+import {
+  createCoderTools,
+  createSession,
+  getAssistantText,
+  type Environment,
+} from "../src/index.ts";
 import {
   createDemoLogger,
   ensureAnthropicKey,
@@ -71,8 +76,7 @@ async function main(): Promise<void> {
   const llm = createAISDKProvider({ model: anthropic(model.name), ...model });
   const session = await createSession({
     llm,
-    workdir,
-    env,
+    tools: createCoderTools(env, { workdir }),
     systemPrompt:
       "You are demoing minimal just-bash host wiring. Use bash for quick inspection, then prefer read/write/edit tools for file work.",
     onEvent: createDemoLogger(),
