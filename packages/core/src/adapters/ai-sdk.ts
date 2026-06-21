@@ -1,4 +1,12 @@
-import { jsonSchema, stepCountIs, streamText, tool, type ModelMessage } from "ai";
+import {
+  jsonSchema,
+  stepCountIs,
+  streamText,
+  tool,
+  type ModelMessage,
+  type TextStreamPart,
+  type ToolSet,
+} from "ai";
 import type {
   LLMMessage,
   LLMProviderWithModel,
@@ -11,17 +19,6 @@ import { resolveModelInfo } from "../llm.ts";
 export interface AISDKProviderOptions extends ModelInfoInit {
   model: Parameters<typeof streamText>[0]["model"];
 }
-
-export type AISDKStreamPart = {
-  type: string;
-  text?: string;
-  toolCallId?: string;
-  toolName?: string;
-  input?: unknown;
-  finishReason?: string;
-  totalUsage?: { inputTokens?: number; outputTokens?: number };
-  error?: unknown;
-};
 
 export function llmMessagesToAISDKMessages(messages: LLMMessage[]): ModelMessage[] {
   const toolNameById = new Map<string, string>();
@@ -103,32 +100,32 @@ export function llmToolsToAISDKTools(tools: LLMRequest["tools"]) {
   );
 }
 
-export async function* aiSDKStreamToLLMStream(
-  stream: AsyncIterable<AISDKStreamPart>,
+export async function* aiSDKStreamToLLMStream<TOOLS extends ToolSet>(
+  stream: AsyncIterable<TextStreamPart<TOOLS>>,
 ): AsyncIterable<LLMStreamEvent> {
   for await (const part of stream) {
     switch (part.type) {
       case "text-delta":
-        yield { type: "text-delta", text: part.text ?? "" };
+        yield { type: "text-delta", text: part.text };
         break;
       case "reasoning-delta":
-        yield { type: "reasoning-delta", text: part.text ?? "" };
+        yield { type: "reasoning-delta", text: part.text };
         break;
       case "tool-call":
         yield {
           type: "tool-call",
-          id: part.toolCallId ?? "unknown",
-          name: part.toolName ?? "unknown",
+          id: part.toolCallId,
+          name: part.toolName,
           args: part.input,
         };
         break;
       case "finish":
         yield {
           type: "finish",
-          reason: part.finishReason ?? "unknown",
+          reason: part.finishReason,
           tokens: {
-            input: part.totalUsage?.inputTokens ?? 0,
-            output: part.totalUsage?.outputTokens ?? 0,
+            input: part.totalUsage.inputTokens ?? 0,
+            output: part.totalUsage.outputTokens ?? 0,
           },
         };
         break;

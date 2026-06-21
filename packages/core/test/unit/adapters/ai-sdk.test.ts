@@ -1,3 +1,4 @@
+import type { TextStreamPart, ToolSet } from "ai";
 import { describe, expect, test } from "bun:test";
 import {
   aiSDKStreamToLLMStream,
@@ -68,21 +69,25 @@ describe("llmToolsToAISDKTools", () => {
 
 describe("aiSDKStreamToLLMStream", () => {
   test("maps AI SDK stream events into harness events", async () => {
-    async function* stream() {
-      yield { type: "text-delta" as const, text: "hi" };
-      yield { type: "reasoning-delta" as const, text: "thinking" };
-      yield {
-        type: "tool-call" as const,
+    const parts = [
+      { type: "text-delta", id: "t0", text: "hi" },
+      { type: "reasoning-delta", id: "r0", text: "thinking" },
+      {
+        type: "tool-call",
         toolCallId: "call-1",
         toolName: "read",
         input: { path: "/note.txt" },
-      };
-      yield {
-        type: "finish" as const,
+      },
+      {
+        type: "finish",
         finishReason: "stop",
         totalUsage: { inputTokens: 10, outputTokens: 5 },
-      };
-      yield { type: "error" as const, error: "boom" };
+      },
+      { type: "error", error: "boom" },
+    ] as unknown as TextStreamPart<ToolSet>[];
+
+    async function* stream(): AsyncGenerator<TextStreamPart<ToolSet>> {
+      for (const part of parts) yield part;
     }
 
     const events = [];

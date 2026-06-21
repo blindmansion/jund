@@ -1,9 +1,9 @@
+import type { StreamChunk } from "@tanstack/ai";
 import { describe, expect, test } from "bun:test";
 import {
   llmMessagesToTanStackModelMessages,
   llmToolsToTanStackToolDefinitions,
   tanStackAGUIStreamToLLMStream,
-  type TanStackStreamEvent,
 } from "../../../src/adapters/tanstack-ai.ts";
 import type { LLMMessage, LLMRequest } from "../../../src/llm.ts";
 
@@ -70,19 +70,23 @@ describe("llmToolsToTanStackToolDefinitions", () => {
 
 describe("tanStackAGUIStreamToLLMStream", () => {
   test("maps AG-UI events into harness events", async () => {
-    async function* stream(): AsyncGenerator<TanStackStreamEvent> {
-      yield { type: "TEXT_MESSAGE_CONTENT", delta: "hi" };
-      yield {
+    const chunks = [
+      { type: "TEXT_MESSAGE_CONTENT", delta: "hi" },
+      {
         type: "TOOL_CALL_END",
         toolCallId: "t1",
         toolName: "read",
         input: { path: "/a" },
-      };
-      yield {
+      },
+      {
         type: "RUN_FINISHED",
         finishReason: "tool_calls",
         usage: { promptTokens: 1, completionTokens: 2 },
-      };
+      },
+    ] as unknown as StreamChunk[];
+
+    async function* stream(): AsyncGenerator<StreamChunk> {
+      for (const chunk of chunks) yield chunk;
     }
 
     const events = [];
@@ -102,8 +106,8 @@ describe("tanStackAGUIStreamToLLMStream", () => {
   });
 
   test("emits finish when stream ends without RUN_FINISHED", async () => {
-    async function* stream(): AsyncGenerator<TanStackStreamEvent> {
-      yield { type: "TEXT_MESSAGE_CONTENT", delta: "x" };
+    async function* stream(): AsyncGenerator<StreamChunk> {
+      yield { type: "TEXT_MESSAGE_CONTENT", delta: "x" } as unknown as StreamChunk;
     }
 
     const events = [];

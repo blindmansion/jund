@@ -1,4 +1,10 @@
-import type { AnyTextAdapter, JSONSchema, ModelMessage, ToolCall } from "@tanstack/ai";
+import type {
+  AnyTextAdapter,
+  JSONSchema,
+  ModelMessage,
+  StreamChunk,
+  ToolCall,
+} from "@tanstack/ai";
 import type {
   LLMMessage,
   LLMProviderWithModel,
@@ -7,17 +13,6 @@ import type {
   ModelInfoInit,
 } from "../llm.ts";
 import { resolveModelInfo } from "../llm.ts";
-
-export type TanStackStreamEvent =
-  | { type: "TEXT_MESSAGE_CONTENT"; delta: string }
-  | { type: "STEP_FINISHED"; delta?: string }
-  | { type: "TOOL_CALL_END"; toolCallId: string; toolName: string; input?: unknown }
-  | {
-      type: "RUN_FINISHED";
-      finishReason: string | null;
-      usage?: { promptTokens?: number; completionTokens?: number };
-    }
-  | { type: "RUN_ERROR"; error: { message: string } };
 
 export interface TanStackTextProviderOptions extends ModelInfoInit {
   /** TanStack text adapter from a provider package (e.g. `anthropicText(...)`). */
@@ -105,7 +100,9 @@ export function llmToolsToTanStackToolDefinitions(tools: LLMRequest["tools"]) {
   }));
 }
 
-function finishTokens(usage: { promptTokens?: number; completionTokens?: number } | undefined): {
+type RunFinishedUsage = Extract<StreamChunk, { type: "RUN_FINISHED" }>["usage"];
+
+function finishTokens(usage: RunFinishedUsage): {
   input: number;
   output: number;
 } {
@@ -114,7 +111,7 @@ function finishTokens(usage: { promptTokens?: number; completionTokens?: number 
 }
 
 export async function* tanStackAGUIStreamToLLMStream(
-  stream: AsyncIterable<TanStackStreamEvent>,
+  stream: AsyncIterable<StreamChunk>,
 ): AsyncIterable<LLMStreamEvent> {
   let finishSeen = false;
 
@@ -176,7 +173,7 @@ export function createTanStackTextProvider(
           modelOptions: request.providerOptions as object | undefined,
         });
 
-        yield* tanStackAGUIStreamToLLMStream(aguiStream as AsyncIterable<TanStackStreamEvent>);
+        yield* tanStackAGUIStreamToLLMStream(aguiStream);
       },
     },
   };
