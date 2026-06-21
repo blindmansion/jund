@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import type { LLMMessage, LLMProvider, LLMToolDef, ModelInfo } from "../llm.ts";
-import type { AssistantMessage, Message, UserPart } from "../types.ts";
+import type { Message, UserPart } from "../types.ts";
 
 // ── Tool definition ─────────────────────────────────────────────────────────
 
@@ -28,12 +28,6 @@ export interface ToolContext {
   sessionId: string;
   abort: AbortSignal;
   onUpdate(partial: ToolResult): void;
-  spawnSubagent?: (input: {
-    prompt: string;
-    agent?: string;
-    signal: AbortSignal;
-    onUpdate?: (chunk: string) => void;
-  }) => Promise<{ sessionId: string; agent: string; message: AssistantMessage }>;
 }
 
 export interface ToolResult {
@@ -68,7 +62,6 @@ export interface CompactionContext {
   sessionId: string;
   llm: LLMProvider;
   model: ModelInfo;
-  agent: string;
   signal: AbortSignal;
   reason: CompactionReason;
   retry?: { maxAttempts?: number; maxDelayMs?: number };
@@ -88,7 +81,6 @@ export interface CompactionOptions {
 
 export type BeforeLLMCallHook = (ctx: {
   sessionId: string;
-  agent: string;
   system: string;
   messages: LLMMessage[];
   tools: LLMToolDef[];

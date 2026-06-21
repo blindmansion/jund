@@ -38,9 +38,6 @@ export interface SessionSqlRow {
   current_history_snapshot_id: string | null;
   next_turn_seq: number;
   version: number;
-  resume_model_provider: string;
-  resume_model_id: string;
-  resume_agent: string;
   metadata_json: string | null;
   created_at: number;
   updated_at: number;
@@ -112,13 +109,10 @@ export function prepareSessionSqliteStatements(db: {
         current_history_snapshot_id,
         next_turn_seq,
         version,
-        resume_model_provider,
-        resume_model_id,
-        resume_agent,
         metadata_json,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ),
     sessionRead: prep(
       `SELECT
@@ -128,9 +122,6 @@ export function prepareSessionSqliteStatements(db: {
         current_history_snapshot_id,
         next_turn_seq,
         version,
-        resume_model_provider,
-        resume_model_id,
-        resume_agent,
         metadata_json,
         created_at,
         updated_at
@@ -145,9 +136,6 @@ export function prepareSessionSqliteStatements(db: {
         current_history_snapshot_id = ?,
         next_turn_seq = ?,
         version = ?,
-        resume_model_provider = ?,
-        resume_model_id = ?,
-        resume_agent = ?,
         metadata_json = ?,
         created_at = ?,
         updated_at = ?
@@ -161,9 +149,6 @@ export function prepareSessionSqliteStatements(db: {
         current_history_snapshot_id,
         next_turn_seq,
         version,
-        resume_model_provider,
-        resume_model_id,
-        resume_agent,
         metadata_json,
         created_at,
         updated_at
@@ -178,9 +163,6 @@ export function prepareSessionSqliteStatements(db: {
         current_history_snapshot_id,
         next_turn_seq,
         version,
-        resume_model_provider,
-        resume_model_id,
-        resume_agent,
         metadata_json,
         created_at,
         updated_at
@@ -196,9 +178,6 @@ export function prepareSessionSqliteStatements(db: {
         current_history_snapshot_id,
         next_turn_seq,
         version,
-        resume_model_provider,
-        resume_model_id,
-        resume_agent,
         metadata_json,
         created_at,
         updated_at
@@ -391,9 +370,6 @@ CREATE TABLE IF NOT EXISTS sessions (
   current_history_snapshot_id TEXT,
   next_turn_seq INTEGER NOT NULL,
   version INTEGER NOT NULL,
-  resume_model_provider TEXT NOT NULL,
-  resume_model_id TEXT NOT NULL,
-  resume_agent TEXT NOT NULL,
   metadata_json TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -459,13 +435,6 @@ export function sessionFromSql(row: SessionSqlRow): Session {
     currentHistorySnapshotId: row.current_history_snapshot_id,
     nextTurnSeq: row.next_turn_seq,
     version: row.version,
-    resumeTurnConfig: {
-      agent: row.resume_agent,
-      model: {
-        provider: row.resume_model_provider,
-        model: row.resume_model_id,
-      },
-    },
     metadata: row.metadata_json
       ? (JSON.parse(row.metadata_json) as Session["metadata"])
       : undefined,

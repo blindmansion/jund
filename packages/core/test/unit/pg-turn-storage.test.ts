@@ -92,13 +92,12 @@ describe.skipIf(!canRun)("PgStorage", () => {
       id: "pg-test-session-1",
       createdAt: now,
       updatedAt: now,
-      agent: "test-agent",
-      model: { provider: "test", model: "mock" },
+      metadata: { agent: "test-agent" },
     });
     expect(session.id).toBe("pg-test-session-1");
 
     const loaded = await storage.loadSession("pg-test-session-1");
     expect(loaded).not.toBeNull();
-    expect(loaded!.resumeTurnConfig.agent).toBe("test-agent");
+    expect(loaded!.metadata?.agent).toBe("test-agent");
   });
 });

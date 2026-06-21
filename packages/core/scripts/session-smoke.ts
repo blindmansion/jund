@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
+import { z } from "zod";
 import { anthropic } from "@ai-sdk/anthropic";
 import { createAISDKProvider } from "../src/adapters/ai-sdk.ts";
 import {
   createCoderTools,
+  createReadTool,
   createSession,
   getAssistantText,
   type Environment,
   type LLMProviderWithModel,
+  type ToolDef,
 } from "../src/index.ts";
 
 const MODEL_ID = process.env.LIVE_LLM_MODEL ?? "claude-sonnet-4-20250514";
@@ -110,16 +113,34 @@ async function runToolScenario(llm: LLMProviderWithModel): Promise<void> {
 
 async function runSubagentScenario(llm: LLMProviderWithModel): Promise<void> {
   console.log("\n[subagent] starting");
+  const env = createMemoryEnvironment({
+    "/project/note.txt": "delegated hello from the smoke test",
+  });
+
+  // Sub-agents are now just a host-authored tool that calls createSession
+  // itself. The host owns the child's prompt, tools, and model.
+  const taskTool: ToolDef = {
+    id: "task",
+    description: "Delegate a focused read-only lookup to a child agent.",
+    parameters: z.object({ prompt: z.string() }),
+    async execute({ prompt }, ctx) {
+      const child = await createSession({
+        llm,
+        tools: [createReadTool(env, { workdir: "/project" })],
+        systemPrompt: "You are a read-only explorer. Inspect files and answer concisely.",
+      });
+      const reply = await child.prompt(prompt);
+      if (reply.error) throw reply.error;
+      ctx.onUpdate({ output: getAssistantText(reply) });
+      return { output: getAssistantText(reply) || "(no output)", title: "explorer subagent" };
+    },
+  };
+
   const session = await createSession({
     llm,
-    tools: createCoderTools(
-      createMemoryEnvironment({
-        "/project/note.txt": "delegated hello from the smoke test",
-      }),
-      { workdir: "/project" },
-    ),
+    tools: [...createCoderTools(env, { workdir: "/project" }), taskTool],
     systemPrompt:
-      "When a focused read-only lookup is enough, delegate with the task tool and let the explorer subagent inspect files.",
+      "When a focused read-only lookup is enough, delegate with the task tool and let the child agent inspect files.",
   });
 
   const result = await session.prompt(

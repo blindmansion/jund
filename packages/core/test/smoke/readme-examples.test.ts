@@ -282,7 +282,6 @@ describe("README: Lower-level primitives", () => {
       id: generateId(),
       role: "assistant" as const,
       parts: [] as any[],
-      agent: "coder",
       model: { provider: "test", model: "mock" },
     };
 
@@ -294,7 +293,6 @@ describe("README: Lower-level primitives", () => {
       tools: [],
       abort: new AbortController().signal,
       sessionId: "test",
-      agent: "coder",
       emit: () => {},
     });
 
@@ -308,7 +306,6 @@ describe("README: Lower-level primitives", () => {
       role: "user" as const,
       parts: [{ type: "text" as const, text: "Hi" }],
       model: { provider: "test", model: "mock" },
-      agent: "coder",
     };
 
     const result = await processTurn({
@@ -318,7 +315,6 @@ describe("README: Lower-level primitives", () => {
       tools: [],
       toolMap: new Map(),
       sessionId: "test",
-      agent: "coder",
       model: { provider: "test", model: "mock" },
       abort: new AbortController().signal,
       emit: () => {},
@@ -331,7 +327,7 @@ describe("README: Lower-level primitives", () => {
 
   test("buildSystemPrompt assembles a prompt", () => {
     const prompt = buildSystemPrompt({
-      agentPrompt: "You are a helpful assistant.",
+      base: "You are a helpful assistant.",
       tools: [],
     });
     expect(typeof prompt).toBe("string");

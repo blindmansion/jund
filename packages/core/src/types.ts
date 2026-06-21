@@ -50,14 +50,12 @@ export interface UserMessage {
   role: "user";
   parts: UserPart[];
   model: ModelRef;
-  agent: string;
 }
 
 export interface AssistantMessage {
   id: string;
   role: "assistant";
   parts: AssistantPart[];
-  agent: string;
   model: ModelRef;
   tokens?: { input: number; output: number };
   finishReason?: string;

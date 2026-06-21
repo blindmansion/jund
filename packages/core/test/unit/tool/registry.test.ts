@@ -1,12 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import type { ToolDef } from "../../../src/tool/types.ts";
-import {
-  ToolRegistry,
-  buildToolMap,
-  filterToolsForAgent,
-  toLLMTool,
-} from "../../../src/tool/registry.ts";
+import { ToolRegistry, buildToolMap, toLLMTool } from "../../../src/tool/registry.ts";
 
 function makeTool(id: string): ToolDef<{ path: string }> {
   return {
@@ -22,17 +17,6 @@ function makeTool(id: string): ToolDef<{ path: string }> {
 }
 
 describe("tool registry", () => {
-  test("filters tools with allowlist and denylist", () => {
-    const tools = [makeTool("read"), makeTool("write"), makeTool("bash")];
-
-    const filtered = filterToolsForAgent(tools, {
-      tools: ["read", "write"],
-      deniedTools: ["write"],
-    });
-
-    expect(filtered.map((tool) => tool.id)).toEqual(["read"]);
-  });
-
   test("buildToolMap indexes tools by id", () => {
     const map = buildToolMap([makeTool("read"), makeTool("write")]);
 
@@ -69,13 +53,11 @@ describe("tool registry", () => {
     expect(registry.list().map((tool) => tool.id)).toEqual(["edit"]);
   });
 
-  test("registry returns filtered maps and llm tools", () => {
+  test("registry exposes llm tools for the full set", () => {
     const registry = new ToolRegistry([makeTool("read"), makeTool("write"), makeTool("bash")]);
 
-    const map = registry.mapForAgent({ deniedTools: ["bash"] });
-    const llmTools = registry.toLLMTools({ tools: ["write", "bash"], deniedTools: ["bash"] });
+    const llmTools = registry.toLLMTools();
 
-    expect([...map.keys()]).toEqual(["read", "write"]);
-    expect(llmTools.map((tool) => tool.name)).toEqual(["write"]);
+    expect(llmTools.map((tool) => tool.name)).toEqual(["read", "write", "bash"]);
   });
 });

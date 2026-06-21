@@ -47,7 +47,6 @@ function baseOptions(
     tools: [],
     toolMap: new Map(),
     sessionId: "session-1",
-    agent: "coder",
     model: { provider: "test", model: "mock-1" },
     abort: new AbortController().signal,
     emit(event) {

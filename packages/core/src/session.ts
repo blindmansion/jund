@@ -1,4 +1,4 @@
-import { CODER_AGENT, EXPLORER_AGENT, type AgentConfig } from "./agent.ts";
+import type { z } from "zod";
 import {
   DEFAULT_COMPACTION_SYSTEM_PROMPT,
   DEFAULT_COMPACTION_THRESHOLD,
@@ -10,10 +10,8 @@ import { createEventEmitter, type EventHandler } from "./events.ts";
 import type { LLMProviderWithModel, ModelInfo } from "./llm.ts";
 import { toLLMMessages } from "./llm.ts";
 import { processTurn } from "./processor.ts";
-import { buildSystemPrompt } from "./prompt.ts";
-import { ToolRegistry, buildToolMap, filterToolsForAgent, toLLMTool } from "./tool/registry.ts";
+import { ToolRegistry, buildToolMap, toLLMTool } from "./tool/registry.ts";
 import { FileMutationQueue } from "./tool/queue.ts";
-import { taskTool } from "./tool/task.ts";
 import type {
   AfterToolCallHook,
   BeforeBranchHook,
@@ -38,19 +36,34 @@ import {
 import { SessionPersistenceAdapter } from "./storage/adapter.ts";
 import { MemoryStorage } from "./storage/memory.ts";
 import type {
+  MetadataBag,
   Session as StorageSession,
   SessionMetadata,
   SessionStorageDriver,
 } from "./storage/types.ts";
 import { generateId } from "./util/id.ts";
 
-export interface SessionOptions {
+/**
+ * Resolves the system prompt for a turn. Evaluated each turn, so it sees the
+ * current tool set (after any runtime `setTools`) and the live history. The
+ * returned string is used verbatim — core imposes no assembly. Use
+ * `buildSystemPrompt` inside the resolver if you want batteries-included
+ * assembly.
+ */
+export type SystemPromptResolver = (ctx: {
+  tools: ToolDef[];
+  messages: Message[];
+  model: ModelInfo;
+}) => string | Promise<string>;
+
+export interface SessionOptions<TMeta extends MetadataBag = MetadataBag> {
   sessionId?: string;
   llm: LLMProviderWithModel;
-  agents?: AgentConfig[];
-  defaultAgent?: string;
   tools?: ToolDef[];
-  systemPrompt?: string;
+  /** Static base prompt, or a resolver evaluated each turn. Used verbatim. */
+  systemPrompt?: string | SystemPromptResolver;
+  /** Step budget for a single prompt. Unbounded when omitted. */
+  maxSteps?: number;
   maxOutputChars?: number;
   toolExecution?: "parallel" | "sequential";
   transformContext?: ContextTransform;
@@ -65,42 +78,41 @@ export interface SessionOptions {
   compaction?: false | CompactionOptions;
   beforeCompaction?: BeforeCompactionHook;
   storage?: SessionStorageDriver;
+  /** Opaque, host-owned per-session JSON. Persisted at create, readable on load. */
+  metadata?: TMeta;
+  /**
+   * Reattach to an existing `sessionId` instead of creating a new row. Requires
+   * `sessionId`. Pair with `seedMessages` (e.g. from `readSession`) to seed the
+   * in-memory history; turns keep appending from the stored sequence.
+   */
+  attach?: boolean;
+  /** Messages to seed in-memory history with when attaching. */
+  seedMessages?: Message[];
 }
 
 export interface BranchOptions {
   sessionId?: string;
 }
 
-export interface ResumeOptions {
-  llm: LLMProviderWithModel;
-  storage: SessionStorageDriver;
-  defaultAgent?: string;
-  agents?: AgentConfig[];
-  tools?: ToolDef[];
-  systemPrompt?: string;
-  maxOutputChars?: number;
-  toolExecution?: "parallel" | "sequential";
-  transformContext?: ContextTransform;
-  beforeInput?: BeforeInputHook;
-  beforeBranch?: BeforeBranchHook;
-  beforeToolCall?: BeforeToolCallHook;
-  afterToolCall?: AfterToolCallHook;
-  beforeLLMCall?: BeforeLLMCallHook;
-  beforePrompt?: BeforePromptHook;
-  onEvent?: EventHandler;
-  retry?: { maxAttempts?: number; maxDelayMs?: number };
-  compaction?: false | CompactionOptions;
-  beforeCompaction?: BeforeCompactionHook;
+/**
+ * Plain stored session data: the host's opaque metadata, the prompt-visible
+ * message history, and lineage. Returned by `readSession`; drop it into
+ * `createSession({ attach: true, seedMessages })` with your own config.
+ */
+export interface LoadedSession<TMeta extends MetadataBag = MetadataBag> {
+  metadata: TMeta | undefined;
+  messages: Message[];
+  parentSessionId: string | undefined;
+  branchedFromMessageId: string | undefined;
 }
 
-export interface SessionInfo {
+export interface SessionInfo<TMeta extends MetadataBag = MetadataBag> {
   id: string;
   parentSessionId: string | undefined;
   branchedFromMessageId: string | undefined;
-  model: ModelRef;
-  agent: string;
   createdAt: number;
   updatedAt: number;
+  metadata: TMeta | undefined;
 }
 
 export interface Session {
@@ -124,36 +136,9 @@ export interface Session {
   setBeforeLLMCall(hook: BeforeLLMCallHook | undefined): void;
   setBeforeCompaction(hook: BeforeCompactionHook | undefined): void;
   compact(): Promise<boolean>;
-  setLLM(llm: LLMProviderWithModel): Promise<void>;
+  setLLM(llm: LLMProviderWithModel): void;
   readonly isStreaming: boolean;
   readonly model: ModelInfo;
-}
-
-function shouldInstallTaskTool(agent: AgentConfig): boolean {
-  if (agent.deniedTools?.includes("task")) {
-    return false;
-  }
-  if (agent.mode !== "subagent") {
-    return true;
-  }
-  return agent.tools?.includes("task") ?? false;
-}
-
-function getBuiltInTools(agent: AgentConfig): ToolDef[] {
-  return shouldInstallTaskTool(agent) ? [taskTool] : [];
-}
-
-function buildAgentMap(customAgents: AgentConfig[] = []): Map<string, AgentConfig> {
-  return new Map(
-    [CODER_AGENT, EXPLORER_AGENT, ...customAgents].map((agent) => [agent.name, agent] as const),
-  );
-}
-
-function resolveConfiguredAgent(
-  defaultAgent: string | undefined,
-  customAgents: AgentConfig[] | undefined,
-): AgentConfig {
-  return buildAgentMap(customAgents).get(defaultAgent ?? CODER_AGENT.name) ?? CODER_AGENT;
 }
 
 function toMessageModel(model: ModelInfo): ModelRef {
@@ -203,20 +188,18 @@ function resolveCompactionOptions(
 
 function makeSessionMetadata(options: {
   sessionId: string;
-  model: ModelInfo;
-  agent: string;
+  metadata?: MetadataBag;
   parentSessionId?: string;
   branchedFromMessageId?: string;
 }): SessionMetadata {
   const now = Date.now();
   return {
     id: options.sessionId,
-    model: toMessageModel(options.model),
-    agent: options.agent,
     createdAt: now,
     updatedAt: now,
     parentSessionId: options.parentSessionId,
     branchedFromMessageId: options.branchedFromMessageId,
+    metadata: options.metadata,
   };
 }
 
@@ -228,8 +211,24 @@ async function initializeSessionState(
   options: SessionOptions,
   storage: SessionPersistenceAdapter,
 ): Promise<SessionState> {
-  const sessionId = options.sessionId ?? generateId();
+  if (options.attach) {
+    if (!options.sessionId) {
+      throw new AgentError("attach requires a sessionId.", "SESSION_NOT_FOUND");
+    }
+    const existing = await storage.loadSession(options.sessionId);
+    if (!existing) {
+      throw new AgentError(`Session not found: ${options.sessionId}`, "SESSION_NOT_FOUND");
+    }
+    const messages = options.seedMessages ?? (await storage.loadVisibleMessages(options.sessionId));
+    return {
+      sessionId: options.sessionId,
+      messages: [...messages],
+      parentSessionId: existing.parentSessionId,
+      branchedFromMessageId: existing.branchedFromMessageId,
+    };
+  }
 
+  const sessionId = options.sessionId ?? generateId();
   if (options.sessionId) {
     const existing = await storage.loadSession(sessionId);
     if (existing) {
@@ -237,13 +236,7 @@ async function initializeSessionState(
     }
   }
 
-  const agentName = resolveConfiguredAgent(options.defaultAgent, options.agents).name;
-  const meta = makeSessionMetadata({
-    sessionId,
-    model: options.llm.model,
-    agent: agentName,
-  });
-  await storage.createSession(meta);
+  await storage.createSession(makeSessionMetadata({ sessionId, metadata: options.metadata }));
   return { sessionId, messages: [] };
 }
 
@@ -267,74 +260,24 @@ async function createSessionInternal(
   let beforeCompaction = options.beforeCompaction;
   let streaming = false;
   let currentAbort: AbortController | undefined;
-  let pendingModelSwitch: Promise<void> | undefined;
 
   const eventEmitter = createEventEmitter(options.onEvent);
   const queue = new FileMutationQueue();
-  const agents = buildAgentMap(options.agents);
-  const resolveAgent = () => agents.get(options.defaultAgent ?? CODER_AGENT.name) ?? CODER_AGENT;
   let customTools = [...(options.tools ?? [])];
   const currentMessages: Message[] = [...state.messages];
   let compactedDuringTurn = false;
-  const spawnSubagent = async (input: {
-    prompt: string;
-    agent?: string;
-    signal: AbortSignal;
-    onUpdate?: (chunk: string) => void;
-  }): Promise<{ sessionId: string; agent: string; message: AssistantMessage }> => {
-    const targetAgentName = input.agent ?? EXPLORER_AGENT.name;
-    const targetAgent = agents.get(targetAgentName);
-    if (!targetAgent) {
-      throw new Error(`Unknown subagent: ${targetAgentName}`);
-    }
+  const registry = new ToolRegistry(customTools);
 
-    const childSessionId = generateId();
-    const child = await createSessionInternal({
-      ...options,
-      sessionId: childSessionId,
-      llm: { llm, model },
-      defaultAgent: targetAgent.name,
-      tools: [...customTools],
-      transformContext,
-      beforeInput,
-      beforeBranch,
-      beforeToolCall,
-      afterToolCall,
-      beforeLLMCall,
-      beforeCompaction,
-      beforePrompt,
-      onEvent(event) {
-        switch (event.type) {
-          case "text.delta":
-            input.onUpdate?.(event.text);
-            break;
-          case "tool.output":
-            input.onUpdate?.(event.chunk);
-            break;
-          default:
-            break;
-        }
-      },
-    });
-
-    const abortChild = () => {
-      child.cancel();
-    };
-    if (input.signal.aborted) {
-      abortChild();
-    } else {
-      input.signal.addEventListener("abort", abortChild, { once: true });
+  const resolveSystemPrompt = async (tools: ToolDef[], messages: Message[]): Promise<string> => {
+    const systemPrompt = options.systemPrompt;
+    if (systemPrompt === undefined) {
+      return "";
     }
-
-    try {
-      const message = await child.prompt(input.prompt);
-      return { sessionId: child.id, agent: targetAgent.name, message };
-    } finally {
-      input.signal.removeEventListener("abort", abortChild);
+    if (typeof systemPrompt === "string") {
+      return systemPrompt;
     }
+    return await systemPrompt({ tools, messages, model });
   };
-  const currentBuiltInTools = () => getBuiltInTools(resolveAgent());
-  const registry = new ToolRegistry([...currentBuiltInTools(), ...customTools]);
 
   const emitToolsChanged = () =>
     eventEmitter.emit({
@@ -342,25 +285,11 @@ async function createSessionInternal(
       tools: registry.list().map((tool) => tool.id),
     });
 
-  const rebuildRegistry = () => {
-    registry.set([...currentBuiltInTools(), ...customTools]);
-  };
-
-  const awaitPendingModelSwitch = async () => {
-    if (pendingModelSwitch) {
-      await pendingModelSwitch;
-    }
-  };
-
   const replaceMessageHistory = (messages: Message[]) => {
     currentMessages.splice(0, currentMessages.length, ...messages);
   };
 
-  const compactHistory = async (
-    reason: CompactionReason,
-    activeAgent: AgentConfig,
-    signal: AbortSignal,
-  ) => {
+  const compactHistory = async (reason: CompactionReason, signal: AbortSignal) => {
     const resolved = resolveCompactionOptions(compaction);
     if (!resolved) {
       return false;
@@ -397,7 +326,6 @@ async function createSessionInternal(
       sessionId,
       llm,
       model,
-      agent: activeAgent.name,
       signal,
       reason,
       retry: options.retry,
@@ -429,7 +357,6 @@ async function createSessionInternal(
       if (streaming) {
         throw new AgentError("Session is already streaming.", "SESSION_BUSY");
       }
-      await awaitPendingModelSwitch();
 
       if (beforeInput) {
         const patch = await beforeInput({ input, sessionId });
@@ -441,12 +368,10 @@ async function createSessionInternal(
         }
       }
 
-      const agent = resolveAgent();
       const userMessage: Message = {
         id: generateId(),
         role: "user",
         parts: typeof input === "string" ? [{ type: "text", text: input }] : input,
-        agent: agent.name,
         model: toMessageModel(model),
       };
 
@@ -464,13 +389,7 @@ async function createSessionInternal(
 
       try {
         while (true) {
-          const activeAgent = resolveAgent();
-          const activeTools = filterToolsForAgent(registry.list(), activeAgent);
-          const baseSystemPrompt = buildSystemPrompt({
-            agentPrompt: activeAgent.systemPrompt,
-            tools: activeTools,
-            appendPrompt: options.systemPrompt,
-          });
+          const activeTools = registry.list();
 
           const resolvedCompaction = resolveCompactionOptions(compaction);
           if (
@@ -484,7 +403,7 @@ async function createSessionInternal(
                 "COMPACTION_FAILED",
               );
             }
-            const didCompact = await compactHistory("proactive", activeAgent, currentAbort.signal);
+            const didCompact = await compactHistory("proactive", currentAbort.signal);
             if (didCompact) {
               continue;
             }
@@ -495,6 +414,8 @@ async function createSessionInternal(
             transformContext,
             currentAbort.signal,
           );
+
+          const baseSystemPrompt = await resolveSystemPrompt(activeTools, transformedMessages);
 
           const promptPatch = await beforePrompt?.({
             systemPrompt: baseSystemPrompt,
@@ -510,8 +431,6 @@ async function createSessionInternal(
             tools: activeTools.map(toLLMTool),
             toolMap: buildToolMap(activeTools),
             sessionId: session.id,
-            spawnSubagent,
-            agent: activeAgent.name,
             model: toMessageModel(model),
             abort: currentAbort.signal,
             emit: eventEmitter.emit,
@@ -527,7 +446,7 @@ async function createSessionInternal(
           if (assistant.error?.code === "CONTEXT_OVERFLOW" && resolvedCompaction) {
             compactionAttempts += 1;
             if (compactionAttempts <= 3) {
-              await compactHistory("reactive", activeAgent, currentAbort.signal);
+              await compactHistory("reactive", currentAbort.signal);
               continue;
             }
           }
@@ -550,7 +469,7 @@ async function createSessionInternal(
           }
 
           steps++;
-          if (activeAgent.maxSteps !== undefined && steps >= activeAgent.maxSteps) {
+          if (options.maxSteps !== undefined && steps >= options.maxSteps) {
             assistant.error = new AgentError("Step budget exhausted.", "MAX_STEPS");
             turnStatus = "failed";
             eventEmitter.emit({ type: "done", message: assistant });
@@ -578,7 +497,6 @@ async function createSessionInternal(
       return [...currentMessages];
     },
     async branchFrom(messageId, branchOptions) {
-      await awaitPendingModelSwitch();
       const index = currentMessages.findIndex((message) => message.id === messageId);
       if (index === -1) {
         throw new AgentError(`Unknown branch point: ${messageId}`, "UNKNOWN_BRANCH_POINT");
@@ -600,8 +518,7 @@ async function createSessionInternal(
       const branchSessionId = branchOptions?.sessionId ?? generateId();
       const branchMeta = makeSessionMetadata({
         sessionId: branchSessionId,
-        model,
-        agent: resolveAgent().name,
+        metadata: options.metadata,
         parentSessionId: sessionId,
         branchedFromMessageId: messageId,
       });
@@ -616,6 +533,8 @@ async function createSessionInternal(
         {
           ...options,
           sessionId: branchSessionId,
+          attach: false,
+          seedMessages: undefined,
           llm: { llm, model },
           tools: [...customTools],
           beforeInput,
@@ -637,17 +556,17 @@ async function createSessionInternal(
     },
     addTool(tool) {
       customTools = [...customTools.filter((candidate) => candidate.id !== tool.id), tool];
-      rebuildRegistry();
+      registry.set(customTools);
       emitToolsChanged();
     },
     removeTool(id) {
       customTools = customTools.filter((tool) => tool.id !== id);
-      rebuildRegistry();
+      registry.set(customTools);
       emitToolsChanged();
     },
     setTools(tools) {
       customTools = [...tools];
-      rebuildRegistry();
+      registry.set(customTools);
       emitToolsChanged();
     },
     getTools() {
@@ -679,8 +598,7 @@ async function createSessionInternal(
         throw new AgentError("Cannot compact while a prompt is in progress.", "COMPACT_REJECTED");
       }
       const abort = new AbortController();
-      const agent = resolveAgent();
-      const didCompact = await compactHistory("manual", agent, abort.signal);
+      const didCompact = await compactHistory("manual", abort.signal);
       if (didCompact) {
         await storage.writeCompactionHistorySnapshot(sessionId, [...currentMessages]);
       }
@@ -689,26 +607,9 @@ async function createSessionInternal(
     setBeforeCompaction(hook) {
       beforeCompaction = hook;
     },
-    async setLLM(next) {
-      await awaitPendingModelSwitch();
-      const switchPromise = (async () => {
-        await storage.updateSessionMetadata(sessionId, {
-          resumeTurnConfig: {
-            agent: resolveAgent().name,
-            model: toMessageModel(next.model),
-          },
-        });
-        llm = next.llm;
-        model = next.model;
-      })();
-      pendingModelSwitch = switchPromise;
-      try {
-        await switchPromise;
-      } finally {
-        if (pendingModelSwitch === switchPromise) {
-          pendingModelSwitch = undefined;
-        }
-      }
+    setLLM(next) {
+      llm = next.llm;
+      model = next.model;
     },
     get isStreaming() {
       return streaming;
@@ -721,90 +622,84 @@ async function createSessionInternal(
   return session;
 }
 
-export async function createSession(options: SessionOptions): Promise<Session> {
-  return createSessionInternal(options);
+export async function createSession<TMeta extends MetadataBag = MetadataBag>(
+  options: SessionOptions<TMeta>,
+): Promise<Session> {
+  return createSessionInternal(options as SessionOptions);
 }
 
-export async function resumeSession(sessionId: string, options: ResumeOptions): Promise<Session> {
-  const storage = new SessionPersistenceAdapter(options.storage);
-  const existing = await storage.loadSession(sessionId);
+/**
+ * Read-only convenience that projects stored history back into prompt-visible
+ * messages and surfaces the session's metadata and lineage. Pass the result to
+ * `createSession({ attach: true, seedMessages })` to continue the session with
+ * your own code-defined configuration.
+ */
+export async function readSession<TMeta extends MetadataBag = MetadataBag>(
+  storage: SessionStorageDriver,
+  sessionId: string,
+): Promise<LoadedSession<TMeta> | null>;
+export async function readSession<TSchema extends z.ZodType<MetadataBag>>(
+  storage: SessionStorageDriver,
+  sessionId: string,
+  options: { metadata: TSchema },
+): Promise<LoadedSession<z.infer<TSchema>> | null>;
+export async function readSession(
+  storage: SessionStorageDriver,
+  sessionId: string,
+  options?: { metadata?: z.ZodType<MetadataBag> },
+): Promise<LoadedSession | null> {
+  const adapter = new SessionPersistenceAdapter(storage);
+  const existing = await adapter.loadSession(sessionId);
   if (!existing) {
-    throw new AgentError(`Session not found: ${sessionId}`, "SESSION_NOT_FOUND");
+    return null;
   }
-
-  const defaultAgent = options.defaultAgent ?? existing.resumeTurnConfig.agent;
-  const agentName = resolveConfiguredAgent(defaultAgent, options.agents).name;
-
-  await storage.updateSessionMetadata(sessionId, {
-    resumeTurnConfig: { agent: agentName, model: toMessageModel(options.llm.model) },
-  });
-
-  const messages = await storage.loadVisibleMessages(sessionId);
-
-  return createSessionInternal(
-    {
-      sessionId,
-      llm: options.llm,
-      defaultAgent,
-      agents: options.agents,
-      tools: options.tools,
-      systemPrompt: options.systemPrompt,
-      maxOutputChars: options.maxOutputChars,
-      toolExecution: options.toolExecution,
-      transformContext: options.transformContext,
-      beforeInput: options.beforeInput,
-      beforeBranch: options.beforeBranch,
-      beforeToolCall: options.beforeToolCall,
-      afterToolCall: options.afterToolCall,
-      beforeLLMCall: options.beforeLLMCall,
-      beforePrompt: options.beforePrompt,
-      onEvent: options.onEvent,
-      retry: options.retry,
-      compaction: options.compaction,
-      beforeCompaction: options.beforeCompaction,
-      storage: options.storage,
-    },
-    {
-      sessionId,
-      messages,
-      parentSessionId: existing.parentSessionId,
-      branchedFromMessageId: existing.branchedFromMessageId,
-    },
-  );
+  const messages = await adapter.loadVisibleMessages(sessionId);
+  const metadata = options?.metadata
+    ? existing.metadata === undefined
+      ? undefined
+      : options.metadata.parse(existing.metadata)
+    : existing.metadata;
+  return {
+    metadata,
+    messages,
+    parentSessionId: existing.parentSessionId,
+    branchedFromMessageId: existing.branchedFromMessageId,
+  };
 }
 
-function storageSessionToInfo(session: StorageSession): SessionInfo {
+function storageSessionToInfo<TMeta extends MetadataBag = MetadataBag>(
+  session: StorageSession,
+): SessionInfo<TMeta> {
   return {
     id: session.id,
     parentSessionId: session.parentSessionId,
     branchedFromMessageId: session.branchedFromMessageId,
-    model: { ...session.resumeTurnConfig.model },
-    agent: session.resumeTurnConfig.agent,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
+    metadata: session.metadata as TMeta | undefined,
   };
 }
 
-export async function listSessions(
+export async function listSessions<TMeta extends MetadataBag = MetadataBag>(
   storage: SessionStorageDriver,
   options?: { limit?: number; offset?: number },
-): Promise<SessionInfo[]> {
+): Promise<SessionInfo<TMeta>[]> {
   const sessions = await storage.listSessions(options);
-  return sessions.map(storageSessionToInfo);
+  return sessions.map((session) => storageSessionToInfo<TMeta>(session));
 }
 
-export async function listBranches(
+export async function listBranches<TMeta extends MetadataBag = MetadataBag>(
   storage: SessionStorageDriver,
   sessionId: string,
-): Promise<SessionInfo[]> {
+): Promise<SessionInfo<TMeta>[]> {
   const sessions = await storage.listSessionsByParent(sessionId);
-  return sessions.map(storageSessionToInfo);
+  return sessions.map((session) => storageSessionToInfo<TMeta>(session));
 }
 
-export async function getSessionInfo(
+export async function getSessionInfo<TMeta extends MetadataBag = MetadataBag>(
   storage: SessionStorageDriver,
   sessionId: string,
-): Promise<SessionInfo | null> {
+): Promise<SessionInfo<TMeta> | null> {
   const session = await storage.getSession(sessionId);
-  return session ? storageSessionToInfo(session) : null;
+  return session ? storageSessionToInfo<TMeta>(session) : null;
 }

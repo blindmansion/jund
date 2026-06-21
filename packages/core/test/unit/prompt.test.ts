@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { z } from "zod";
-import { CODER_AGENT } from "../../src/agent.ts";
-import { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT } from "../../src/prompt.ts";
+import {
+  buildSystemPrompt,
+  DEFAULT_SYSTEM_PROMPT,
+  UNIVERSAL_GUIDELINES,
+} from "../../src/prompt.ts";
 import type { ToolDef } from "../../src/tool/types.ts";
 
 function makeTool(
@@ -24,12 +27,11 @@ describe("buildSystemPrompt", () => {
   test("exports the default coder prompt template", () => {
     expect(DEFAULT_SYSTEM_PROMPT).toContain("host-controlled agent harness");
     expect(DEFAULT_SYSTEM_PROMPT.endsWith("\n")).toBe(false);
-    expect(CODER_AGENT.systemPrompt).toBe(DEFAULT_SYSTEM_PROMPT);
   });
 
-  test("includes tool snippets, deduped guidelines, and runtime context", () => {
+  test("includes tool snippets, deduped guidelines, and optional date", () => {
     const prompt = buildSystemPrompt({
-      agentPrompt: "You are helpful.",
+      base: "You are helpful.",
       tools: [
         makeTool("read", {
           promptSnippet: "read - inspect files",
@@ -40,7 +42,7 @@ describe("buildSystemPrompt", () => {
           promptGuidelines: ["Use offsets for large files."],
         }),
       ],
-      appendPrompt: "Host note.",
+      guidelines: UNIVERSAL_GUIDELINES,
       now: new Date("2026-04-05T12:00:00Z"),
     });
 
@@ -50,19 +52,18 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("- bash - run shell commands");
     expect(prompt).toContain("Guidelines:");
     expect(prompt.match(/Use offsets for large files\./g)).toHaveLength(1);
-    expect(prompt).toContain("Host note.");
     expect(prompt).toContain("Date: Sun Apr 05 2026");
   });
 
-  test("omits empty sections cleanly", () => {
+  test("omits opt-in sections cleanly", () => {
     const prompt = buildSystemPrompt({
-      agentPrompt: "Base prompt.",
+      base: "Base prompt.",
       tools: [makeTool("read")],
-      now: new Date("2026-04-05T12:00:00Z"),
     });
 
-    expect(prompt).toContain("Base prompt.");
+    expect(prompt).toBe("Base prompt.");
     expect(prompt).not.toContain("Available tools:");
-    expect(prompt).toContain("Guidelines:");
+    expect(prompt).not.toContain("Guidelines:");
+    expect(prompt).not.toContain("Date:");
   });
 });

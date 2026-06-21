@@ -56,7 +56,7 @@ export type {
   BeforePromptHook,
 } from "./tool/types.ts";
 
-export { ToolRegistry, buildToolMap, filterToolsForAgent, toLLMTool } from "./tool/registry.ts";
+export { ToolRegistry, buildToolMap, toLLMTool } from "./tool/registry.ts";
 
 export { executeToolWithHooks } from "./tool/hooks.ts";
 
@@ -81,15 +81,9 @@ export {
 
 export type { ContextPipelineOptions } from "./context.ts";
 
-// ── Agent config ────────────────────────────────────────────────────────────
-
-export type { AgentConfig } from "./agent.ts";
-
-export { CODER_AGENT, EXPLORER_AGENT } from "./agent.ts";
-
 // ── Storage ─────────────────────────────────────────────────────────────────
 
-export type { SessionMetadata, SessionStorageDriver } from "./storage/types.ts";
+export type { MetadataBag, SessionMetadata, SessionStorageDriver } from "./storage/types.ts";
 
 export {
   SessionPersistenceAdapter,
@@ -104,15 +98,16 @@ export {
 
 export type {
   BranchOptions,
-  ResumeOptions,
+  LoadedSession,
   Session,
   SessionInfo,
   SessionOptions,
+  SystemPromptResolver,
 } from "./session.ts";
 
 export {
   createSession,
-  resumeSession,
+  readSession,
   listSessions,
   listBranches,
   getSessionInfo,
@@ -124,7 +119,7 @@ export { callLLM, processTurn } from "./processor.ts";
 
 export type { BuildSystemPromptOptions } from "./prompt.ts";
 
-export { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT } from "./prompt.ts";
+export { buildSystemPrompt, DEFAULT_SYSTEM_PROMPT, UNIVERSAL_GUIDELINES } from "./prompt.ts";
 
 // ── Built-in tools ──────────────────────────────────────────────────────────
 
@@ -139,10 +134,6 @@ export { createBashTool } from "./tool/bash.ts";
 export type { FileToolOptions } from "./tool/coder.ts";
 
 export { createCoderTools, workdirGuideline } from "./tool/coder.ts";
-
-export type { TaskParams } from "./tool/task.ts";
-
-export { taskTool } from "./tool/task.ts";
 
 // ── Utilities ───────────────────────────────────────────────────────────────
 

@@ -82,13 +82,21 @@ Creates a stateful agent session. Key options:
 | Option          | Type                            | Description                                        |
 | --------------- | ------------------------------- | -------------------------------------------------- |
 | `llm`           | `LLMProviderWithModel`          | LLM backend + model metadata (use an adapter)      |
-| `tools`         | `ToolDef[]`                     | Tools available to the agent (e.g. `createCoderTools`) |
-| `systemPrompt`  | `string`                        | Prepended to the default system prompt             |
+| `tools`         | `ToolDef[]`                     | Exactly the tools available to the agent (no hidden built-ins) |
+| `systemPrompt`  | `string \| SystemPromptResolver`| Base prompt, used verbatim. A resolver is evaluated each turn with `{ tools, messages, model }` |
+| `maxSteps`      | `number`                        | Step budget for a single prompt (unbounded when omitted) |
+| `metadata`      | `TMeta` (`MetadataBag`)         | Opaque, host-owned per-session JSON; persisted at create, readable on load |
 | `toolExecution` | `"parallel" \| "sequential"`    | How tool calls in a single step run                |
 | `onEvent`       | `EventHandler`                  | Stream of `AgentEvent`s (deltas, tool calls, etc.) |
 | `compaction`    | `false \| CompactionOptions`    | Context-window compaction strategy                 |
 | `storage`       | `SessionStorageDriver`          | Persist turns and messages                         |
 | `retry`         | `{ maxAttempts?, maxDelayMs? }` | LLM retry policy                                   |
+| `attach`        | `boolean`                       | Reattach to an existing `sessionId` instead of creating one |
+| `seedMessages`  | `Message[]`                     | History to seed when attaching (e.g. from `readSession`) |
+
+Configuration is fully the caller's. jund has no opinion about what a session
+*means* — there is no agent registry, no built-in tools, and no stored prompt;
+you pass tools and a system prompt as code on every `createSession` call.
 
 Lifecycle hooks: `beforeInput`, `beforeToolCall`, `afterToolCall`, `beforeLLMCall`, `beforePrompt`, `beforeCompaction`, `beforeBranch`, `transformContext`.
 
@@ -109,24 +117,40 @@ interface Session {
   removeTool(id: string): void;
   setTools(tools: ToolDef[]): void;
   compact(): Promise<boolean>;
-  setLLM(llm: LLMProviderWithModel): Promise<void>;
+  setLLM(llm: LLMProviderWithModel): void;
   // + setters for every lifecycle hook
 }
 ```
 
-### `resumeSession(sessionId, options): Promise<Session>`
+### `readSession(storage, sessionId, options?): Promise<LoadedSession | null>`
 
-Resumes an existing persisted session. Throws if the session does not exist.
-Runtime dependencies (`llm`, `storage`) are required; `defaultAgent` defaults
-from the stored session state. Re-supply the toolset (e.g. `createCoderTools`)
-the same way you did when creating the session.
+Reads stored history back into prompt-visible messages and surfaces the
+session's `metadata` and lineage. It is a pure read — it never constructs a live
+session or mutates storage. Returns `null` when the session does not exist.
 
 ```typescript
-const session = await resumeSession("session-123", {
-  llm,
-  storage,
-  tools: createCoderTools({ fs, shell }, { workdir: "/" }),
-});
+const loaded = await readSession(storage, "session-123");
+if (loaded) {
+  // loaded: { metadata, messages, parentSessionId, branchedFromMessageId }
+  const session = await createSession({
+    llm,
+    storage,
+    sessionId: "session-123",
+    attach: true,
+    seedMessages: loaded.messages,
+    tools: createCoderTools({ fs, shell }, { workdir: "/" }),
+  });
+  const reply = await session.prompt("Continue where we left off.");
+}
+```
+
+`metadata` is typed. Pass a generic (`readSession<MyMeta>(...)`) for a
+compile-time view, or a zod schema for inference **and** runtime validation:
+
+```typescript
+const MyMeta = z.object({ agentId: z.string(), tenant: z.string() });
+const loaded = await readSession(storage, id, { metadata: MyMeta });
+loaded?.metadata.agentId; // typed + validated
 ```
 
 ### Session discovery
@@ -140,7 +164,7 @@ const info = await getSessionInfo(storage, sessionId);
 ```
 
 Each returns `SessionInfo` objects with `id`, `parentSessionId`,
-`branchedFromMessageId`, `model`, `agent`, and timestamps.
+`branchedFromMessageId`, `metadata`, and timestamps.
 
 ### Tools
 
@@ -163,11 +187,29 @@ const tools = createCoderTools({ fs, shell }, { workdir: "/" });
 const session = await createSession({ llm, tools });
 ```
 
-`taskTool` (spawn sub-agent sessions) is the only tool the session installs
-automatically for primary agents. Pass extra tools via `tools`, or replace the
-whole set at runtime with `setTools`. Tools that mutate state (e.g. `write`,
-`edit`) declare a `mutationKey`; the runtime serializes calls sharing a key so
-concurrent writes to the same file can't race.
+The session installs **no** tools automatically — `getTools()` returns exactly
+what you passed. Add or swap tools at runtime with `addTool`, `removeTool`, or
+`setTools`. Tools that mutate state (e.g. `write`, `edit`) declare a
+`mutationKey`; the runtime serializes calls sharing a key so concurrent writes
+to the same file can't race.
+
+Sub-agents are just a tool you write. Because the session API is small, a "task"
+tool can call `createSession` itself, owning the child's prompt, tools, and
+model — and the parent can inspect, gate, or halt the child via
+`beforeToolCall` / `afterToolCall` or by swapping tools at runtime:
+
+```typescript
+const taskTool: ToolDef = {
+  id: "task",
+  description: "Delegate a focused task to a child agent.",
+  parameters: z.object({ prompt: z.string() }),
+  async execute({ prompt }) {
+    const child = await createSession({ llm, storage, tools: childTools, systemPrompt });
+    const reply = await child.prompt(prompt);
+    return { output: getAssistantText(reply) };
+  },
+};
+```
 
 ## LLM provider adapters
 
@@ -265,25 +307,31 @@ Implement `SessionStorageDriver` to bring your own backend.
 
 ### Resuming a session
 
-Use `resumeSession` to pick up where a previous session left off. The session
-must already exist in storage:
+Resuming is two explicit steps: read the stored data, then construct a session
+with your own code-defined config. Reading is separated from construction so the
+caller decides what a resumed session *is*.
 
 ```typescript
-import { resumeSession } from "@jund/core";
+import { readSession, createSession } from "@jund/core";
 
-const session = await resumeSession("session-123", {
-  llm,
-  storage,
-  tools: createCoderTools({ fs, shell }, { workdir: "/" }),
-  // defaultAgent defaults from stored session
-});
+const loaded = await readSession(storage, "session-123");
+if (loaded) {
+  // Pick config from your own data (e.g. loaded.metadata.agentId).
+  const session = await createSession({
+    llm,
+    storage,
+    sessionId: "session-123",
+    attach: true,
+    seedMessages: loaded.messages,
+    tools: createCoderTools({ fs, shell }, { workdir: "/" }),
+  });
 
-// Conversation history is restored automatically
-const reply = await session.prompt("Continue where we left off.");
+  const reply = await session.prompt("Continue where we left off.");
+}
 ```
 
-`createSession` with an explicit `sessionId` will throw if a session with that
-ID already exists - use `resumeSession` when you intend to continue an existing
+`createSession` with an explicit `sessionId` throws if that session already
+exists — pass `attach: true` when you intend to continue an existing
 conversation.
 
 ### Branching

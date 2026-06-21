@@ -45,9 +45,6 @@ CREATE TABLE IF NOT EXISTS sessions (
   current_history_snapshot_id TEXT,
   next_turn_seq INTEGER NOT NULL,
   version INTEGER NOT NULL,
-  resume_model_provider TEXT NOT NULL,
-  resume_model_id TEXT NOT NULL,
-  resume_agent TEXT NOT NULL,
   metadata_json TEXT,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
@@ -111,9 +108,6 @@ const SQL = {
         current_history_snapshot_id,
         next_turn_seq,
         version,
-        resume_model_provider,
-        resume_model_id,
-        resume_agent,
         metadata_json,
         created_at,
         updated_at
@@ -126,9 +120,6 @@ const SQL = {
         current_history_snapshot_id,
         next_turn_seq,
         version,
-        resume_model_provider,
-        resume_model_id,
-        resume_agent,
         metadata_json,
         created_at,
         updated_at
@@ -142,13 +133,10 @@ const SQL = {
         current_history_snapshot_id,
         next_turn_seq,
         version,
-        resume_model_provider,
-        resume_model_id,
-        resume_agent,
         metadata_json,
         created_at,
         updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
   sessionUpdate: `UPDATE sessions
       SET
         parent_session_id = $1,
@@ -156,13 +144,10 @@ const SQL = {
         current_history_snapshot_id = $3,
         next_turn_seq = $4,
         version = $5,
-        resume_model_provider = $6,
-        resume_model_id = $7,
-        resume_agent = $8,
-        metadata_json = $9,
-        created_at = $10,
-        updated_at = $11
-      WHERE id = $12`,
+        metadata_json = $6,
+        created_at = $7,
+        updated_at = $8
+      WHERE id = $9`,
 
   turnRead: `SELECT
         id,
@@ -335,9 +320,6 @@ const SQL = {
         current_history_snapshot_id,
         next_turn_seq,
         version,
-        resume_model_provider,
-        resume_model_id,
-        resume_agent,
         metadata_json,
         created_at,
         updated_at
@@ -350,9 +332,6 @@ const SQL = {
         current_history_snapshot_id,
         next_turn_seq,
         version,
-        resume_model_provider,
-        resume_model_id,
-        resume_agent,
         metadata_json,
         created_at,
         updated_at
@@ -366,9 +345,6 @@ const SQL = {
         current_history_snapshot_id,
         next_turn_seq,
         version,
-        resume_model_provider,
-        resume_model_id,
-        resume_agent,
         metadata_json,
         created_at,
         updated_at
@@ -408,9 +384,6 @@ function normalizeSessionRow(row: Record<string, unknown>): SessionSqlRow {
     current_history_snapshot_id: (row.current_history_snapshot_id as string | null) ?? null,
     next_turn_seq: asInt(row.next_turn_seq),
     version: asInt(row.version),
-    resume_model_provider: row.resume_model_provider as string,
-    resume_model_id: row.resume_model_id as string,
-    resume_agent: row.resume_agent as string,
     metadata_json: (row.metadata_json as string | null) ?? null,
     created_at: asInt(row.created_at),
     updated_at: asInt(row.updated_at),
@@ -596,9 +569,6 @@ class PgSessionTxn implements SessionStorageTxn {
       session.currentHistorySnapshotId,
       session.nextTurnSeq,
       session.version,
-      session.resumeTurnConfig.model.provider,
-      session.resumeTurnConfig.model.model,
-      session.resumeTurnConfig.agent,
       JSON.stringify(session.metadata ?? null),
       session.createdAt,
       session.updatedAt,
@@ -624,9 +594,6 @@ class PgSessionTxn implements SessionStorageTxn {
       session.currentHistorySnapshotId,
       session.nextTurnSeq,
       session.version,
-      session.resumeTurnConfig.model.provider,
-      session.resumeTurnConfig.model.model,
-      session.resumeTurnConfig.agent,
       JSON.stringify(session.metadata ?? null),
       session.createdAt,
       session.updatedAt,

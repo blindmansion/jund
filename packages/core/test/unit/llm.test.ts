@@ -138,7 +138,6 @@ describe("toLLMMessages", () => {
           { type: "reasoning", text: "Let me think about this..." },
           { type: "text", text: "The answer is 42." },
         ],
-        agent: "coder",
         model: { provider: "test", model: "mock-1" },
         finishReason: "end-turn",
       },
@@ -160,7 +159,6 @@ describe("toLLMMessages", () => {
           { type: "text", text: "What is this?" },
         ],
         model: { provider: "test", model: "mock-1" },
-        agent: "coder",
       },
     ];
     const result = toLLMMessages(messages);
@@ -177,7 +175,6 @@ describe("toLLMMessages", () => {
         role: "user",
         parts: [{ type: "file", path: "/img.png", mime: "image/png" }],
         model: { provider: "test", model: "mock-1" },
-        agent: "coder",
       },
     ];
     const result = toLLMMessages(messages);

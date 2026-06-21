@@ -60,7 +60,6 @@ describe("estimateTokens", () => {
         role: "user",
         parts: [{ type: "file", path: "/path/to/image.png", mime: "image/png" }],
         model: { provider: "test", model: "mock-1" },
-        agent: "coder",
       },
     ];
     const tokens = estimateTokens(messages);
@@ -74,7 +73,6 @@ describe("estimateTokens", () => {
         id: "a1",
         role: "assistant",
         parts: [{ type: "reasoning", text: "Let me think step by step..." }],
-        agent: "coder",
         model: { provider: "test", model: "mock-1" },
       },
     ];
@@ -153,7 +151,6 @@ describe("defaultCompactionStrategy", () => {
         outputLimit: 2_000,
         capabilities: { reasoning: true, toolCalls: true, images: false },
       },
-      agent: "coder",
       signal: new AbortController().signal,
       reason: "proactive",
       summarySystemPrompt: DEFAULT_COMPACTION_SYSTEM_PROMPT,

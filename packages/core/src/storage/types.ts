@@ -1,35 +1,28 @@
-import type { Message, ModelRef } from "../types.ts";
+import type { Message } from "../types.ts";
 
 export type MaybeAsync<T> = T | Promise<T>;
 
+export type MetadataBag = Record<string, unknown>;
+
 export interface SessionMetadata {
   id: string;
-  model: ModelRef;
-  agent: string;
   createdAt: number;
   updatedAt: number;
   parentSessionId?: string;
   branchedFromMessageId?: string;
+  metadata?: MetadataBag;
 }
 
 export type SnapshotReason = "compaction" | "branch-base";
-export type MetadataBag = Record<string, unknown>;
 export type EntryVisibility = "prompt" | "ui";
 export type TurnStatus = "running" | "completed" | "failed" | "cancelled";
 
 /**
- * Resume-time configuration for the next turn.
+ * Stable session record plus its append/branch bookkeeping.
  *
- * This is a projection cache on the session. Historical truth about what
- * happened during a given turn lives on that turn's entries.
- */
-export interface ResumeTurnConfig {
-  agent: string;
-  model: ModelRef;
-}
-
-/**
- * Stable session plus a few cached projections.
+ * Configuration (model, agent, system prompt, etc.) is the implementer's
+ * concern. If a host wants to persist any of it, it goes in the opaque
+ * `metadata` blob — core takes no opinion on its contents.
  */
 export interface Session {
   id: string;
@@ -40,7 +33,6 @@ export interface Session {
   currentHistorySnapshotId: string | null;
   nextTurnSeq: number;
   version: number;
-  resumeTurnConfig: ResumeTurnConfig;
   metadata?: MetadataBag;
 }
 

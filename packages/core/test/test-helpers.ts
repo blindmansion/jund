@@ -55,7 +55,6 @@ export function userMsg(text: string, opts?: Partial<UserMessage>): UserMessage 
     role: "user",
     parts: [{ type: "text", text }],
     model: DEFAULT_MODEL,
-    agent: "coder",
     ...opts,
   };
 }
@@ -65,7 +64,6 @@ export function assistantMsg(text: string, opts?: Partial<AssistantMessage>): As
     id: nextId(),
     role: "assistant",
     parts: [{ type: "text", text }],
-    agent: "coder",
     model: DEFAULT_MODEL,
     finishReason: "end-turn",
     ...opts,
@@ -80,7 +78,6 @@ export function assistantWithTools(toolCalls: ToolCallPart[], text?: string): As
     id: nextId(),
     role: "assistant",
     parts,
-    agent: "coder",
     model: DEFAULT_MODEL,
     finishReason: "tool-calls",
   };

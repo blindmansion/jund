@@ -15,7 +15,6 @@ import type {
   TurnStatus,
   VisibleHistory,
   HistorySnapshot,
-  ResumeTurnConfig,
   ReasoningEntryPayload,
 } from "./types.ts";
 
@@ -83,7 +82,6 @@ export class SessionPersistenceAdapter {
         {
           ...session,
           nextTurnSeq: session.nextTurnSeq + 1,
-          resumeTurnConfig: resumeTurnConfigFromMessage(input.userMessage),
           version: session.version + 1,
           updatedAt: now,
         },
@@ -232,7 +230,6 @@ export class SessionPersistenceAdapter {
     status?: Exclude<TurnStatus, "running">;
   }): Promise<{ turn: Turn }> {
     return await this.driver.transaction(async (tx) => {
-      const session = await requireSession(tx, input.sessionId);
       const turn = await requireTurn(tx, input.turnId);
       assertTurnBelongsToSession(turn, input.sessionId);
       const now = Date.now();
@@ -245,19 +242,6 @@ export class SessionPersistenceAdapter {
         completedAt: now,
       };
       await tx.updateTurn(completedTurn, { expectedVersion: turn.version });
-
-      const resumeConfig = await deriveResumeTurnConfig(tx, turn.id);
-      if (resumeConfig) {
-        await tx.updateSession(
-          {
-            ...session,
-            resumeTurnConfig: resumeConfig,
-            version: session.version + 1,
-            updatedAt: now,
-          },
-          { expectedVersion: session.version },
-        );
-      }
 
       return { turn: completedTurn };
     });
@@ -423,17 +407,7 @@ function sessionFromMetadata(metadata: SessionMetadata): Session {
     currentHistorySnapshotId: null,
     nextTurnSeq: 1,
     version: 1,
-    resumeTurnConfig: {
-      agent: metadata.agent,
-      model: cloneValue(metadata.model),
-    },
-  };
-}
-
-function resumeTurnConfigFromMessage(message: Message): ResumeTurnConfig {
-  return {
-    agent: message.agent,
-    model: cloneValue(message.model),
+    metadata: cloneValue(metadata.metadata),
   };
 }
 
@@ -442,21 +416,6 @@ function messageEntryPayloadFor(message: Message, metadata?: MetadataBag): Messa
     message: cloneValue(message),
     metadata: cloneValue(metadata),
   };
-}
-
-async function deriveResumeTurnConfig(
-  store: SessionStorageRead,
-  turnId: string,
-): Promise<ResumeTurnConfig | null> {
-  const entries = await store.listTurnEntries(turnId, { visibility: "all" });
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const entry = entries[i]!;
-    if (entry.kind === "assistant-message") {
-      const payload = entry.payload as MessageEntryPayload;
-      return resumeTurnConfigFromMessage(payload.message);
-    }
-  }
-  return null;
 }
 
 function entriesToPromptMessages(entries: TurnEntry[]): Message[] {
@@ -509,6 +468,5 @@ function toolResultToMessage(payload: ToolResultEntryPayload, entry: TurnEntry):
       },
     ],
     model: { provider: "", model: "" },
-    agent: "",
   } satisfies UserMessage;
 }

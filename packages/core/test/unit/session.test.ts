@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { z } from "zod";
 import {
   createSession,
-  resumeSession,
+  readSession,
   listSessions,
   listBranches,
   getSessionInfo,
@@ -14,6 +14,8 @@ import type { CompactionStrategy, ToolDef } from "../../src/tool/types.ts";
 import type { Message } from "../../src/types.ts";
 import { createMockEnvironment } from "../test-helpers.ts";
 import { createCoderTools } from "../../src/tool/coder.ts";
+import { createReadTool } from "../../src/tool/read.ts";
+import { getAssistantText } from "../../src/util/message.ts";
 import { SessionPersistenceAdapter, MemoryStorage } from "../../src/storage/index.ts";
 import type { Session as StorageSession } from "../../src/storage/types.ts";
 
@@ -113,7 +115,6 @@ function compactedSummary(text: string): Message {
     id: `summary-${text}`,
     role: "assistant",
     parts: [{ type: "text", text }],
-    agent: "coder",
     model: { provider: "test", model: "small-context" },
     finishReason: "end-turn",
   };
@@ -168,7 +169,7 @@ describe("createSession", () => {
     }
   });
 
-  test("spawns an explorer subagent through the task tool", async () => {
+  test("a host-authored task tool delegates to a child session", async () => {
     const env = createMockEnvironment({ "/project/note.txt": "hello from child" });
     const seenToolLists: string[][] = [];
     const llm = makeLLM((request) => {
@@ -214,9 +215,24 @@ describe("createSession", () => {
       ];
     });
 
+    const taskTool: ToolDef<{ prompt: string }> = {
+      id: "task",
+      description: "Delegate a read-only lookup to a child agent.",
+      parameters: z.object({ prompt: z.string() }),
+      async execute({ prompt }) {
+        const child = await createSession({
+          llm: { llm, model: TEST_MODEL },
+          tools: [createReadTool(env, { workdir: "/project" })],
+        });
+        const reply = await child.prompt(prompt);
+        if (reply.error) throw reply.error;
+        return { output: getAssistantText(reply) };
+      },
+    };
+
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      tools: createCoderTools(env, { workdir: "/project" }),
+      tools: [taskTool],
     });
 
     const result = await session.prompt("Use a subagent.");
@@ -242,55 +258,7 @@ describe("createSession", () => {
     }
   });
 
-  test("returns a clean tool error when a requested subagent does not exist", async () => {
-    const llm = makeLLM((request) => {
-      const hasToolResult = request.messages.some((message) =>
-        message.content.some((part) => part.type === "tool-result"),
-      );
-      if (!hasToolResult) {
-        return [
-          {
-            type: "tool-call",
-            id: "task-1",
-            name: "task",
-            args: { prompt: "Do a thing", agent: "missing" },
-          },
-          { type: "finish", reason: "tool-calls", tokens: { input: 1, output: 1 } },
-        ];
-      }
-
-      expect(toolResultTexts(request)).toContain("Unknown subagent: missing");
-      return [
-        { type: "text-delta", text: "Handled missing subagent." },
-        { type: "finish", reason: "end-turn", tokens: { input: 1, output: 1 } },
-      ];
-    });
-
-    const session = await createSession({
-      llm: { llm, model: TEST_MODEL },
-      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
-    });
-
-    const result = await session.prompt("Use a missing subagent.");
-
-    expect(result.parts).toEqual([{ type: "text", text: "Handled missing subagent." }]);
-    const parentTaskTurn = session.messages()[1];
-    expect(parentTaskTurn?.role).toBe("assistant");
-    if (parentTaskTurn?.role === "assistant") {
-      const toolPart = parentTaskTurn.parts[0] as Extract<
-        (typeof parentTaskTurn.parts)[number],
-        { type: "tool" }
-      >;
-      expect(toolPart.tool).toBe("task");
-      expect(toolPart.state).toEqual({
-        status: "error",
-        error: "Unknown subagent: missing",
-        duration: expect.any(Number),
-      });
-    }
-  });
-
-  test("cancels an in-flight subagent when the parent session is cancelled", async () => {
+  test("a host task tool can wire parent cancellation to its child session", async () => {
     let childStarted!: () => void;
     const childStartedPromise = new Promise<void>((resolve) => {
       childStarted = resolve;
@@ -337,9 +305,31 @@ describe("createSession", () => {
       },
     };
 
+    const taskTool: ToolDef<{ prompt: string }> = {
+      id: "task",
+      description: "Delegate to a child agent, forwarding cancellation.",
+      parameters: z.object({ prompt: z.string() }),
+      async execute({ prompt }, ctx) {
+        const child = await createSession({
+          llm: { llm, model: TEST_MODEL },
+          tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
+        });
+        const onAbort = () => child.cancel();
+        if (ctx.abort.aborted) onAbort();
+        else ctx.abort.addEventListener("abort", onAbort, { once: true });
+        try {
+          const reply = await child.prompt(prompt);
+          if (reply.error) throw reply.error;
+          return { output: getAssistantText(reply) };
+        } finally {
+          ctx.abort.removeEventListener("abort", onAbort);
+        }
+      },
+    };
+
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
+      tools: [taskTool],
     });
 
     const promptPromise = session.prompt("Use a cancellable subagent.");
@@ -596,7 +586,7 @@ describe("createSession", () => {
     expect(session.getTools().map((tool) => tool.id)).not.toContain("extraTool");
   });
 
-  test("setTools replaces custom tools (including coder tools) on the next iteration", async () => {
+  test("setTools replaces the full tool set on the next iteration", async () => {
     const env = createMockEnvironment({ "/project/file.txt": "hello" });
     const oldTool = makeExtraTool("oldTool");
     const newTool = makeExtraTool("newTool");
@@ -637,16 +627,15 @@ describe("createSession", () => {
 
     expect(seenToolLists).toHaveLength(2);
     expect(seenToolLists[0]).toEqual(
-      expect.arrayContaining(["read", "write", "edit", "bash", "task", "oldTool"]),
+      expect.arrayContaining(["read", "write", "edit", "bash", "oldTool"]),
     );
-    expect(seenToolLists[1]).toContain("newTool");
-    expect(seenToolLists[1]).toContain("task");
+    expect(seenToolLists[1]).toEqual(["newTool"]);
     expect(seenToolLists[1]).not.toContain("oldTool");
     expect(seenToolLists[1]).not.toContain("read");
     expect(seenToolLists[1]).not.toContain("write");
     expect(seenToolLists[1]).not.toContain("edit");
     expect(seenToolLists[1]).not.toContain("bash");
-    expect(session.getTools().map((tool) => tool.id)).toEqual(["task", "newTool"]);
+    expect(session.getTools().map((tool) => tool.id)).toEqual(["newTool"]);
   });
 
   test("hook setters take effect on the next iteration", async () => {
@@ -870,12 +859,10 @@ describe("createSession", () => {
     const stored = await storage.loadSession("session-1");
     expect(stored).not.toBeNull();
     expect(stored!.id).toBe("session-1");
-    expect(stored!.resumeTurnConfig.model).toEqual({ provider: "test", model: "mock-1" });
-    expect(stored!.resumeTurnConfig.agent).toBe("coder");
     expect(await storage.loadVisibleMessages("session-1")).toEqual(session.messages());
   });
 
-  test("stores the resolved agent name in metadata", async () => {
+  test("persists host metadata at creation and reads it back", async () => {
     const driver = new MemoryStorage();
     const storage = new SessionPersistenceAdapter(driver);
     await createSession({
@@ -887,19 +874,18 @@ describe("createSession", () => {
         ]),
         model: TEST_MODEL,
       },
-      defaultAgent: "missing-agent",
+      metadata: { agentId: "explorer", tenant: "acme" },
       tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
 
     const stored = await storage.loadSession("session-1");
     expect(stored).not.toBeNull();
-    expect(stored!.resumeTurnConfig.agent).toBe("coder");
+    expect(stored!.metadata).toEqual({ agentId: "explorer", tenant: "acme" });
   });
 
-  test("resumes stored sessions and refreshes descriptive metadata", async () => {
+  test("readSession returns metadata and history for reattachment", async () => {
     const driver = new MemoryStorage();
-    const storage = new SessionPersistenceAdapter(driver);
     const llm = makeLLM((request) => [
       { type: "text-delta", text: `reply:${lastUserText(request)}` },
       { type: "finish", reason: "end-turn", tokens: { input: 1, output: 1 } },
@@ -910,17 +896,26 @@ describe("createSession", () => {
       llm: { llm, model: TEST_MODEL },
       tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
+      metadata: { agentId: "coder" },
     });
     await first.prompt("hello");
 
-    const resumed = await resumeSession("session-1", {
+    const loaded = await readSession(driver, "session-1");
+    expect(loaded).not.toBeNull();
+    expect(loaded!.metadata).toEqual({ agentId: "coder" });
+    expect(loaded!.messages).toEqual(first.messages());
+
+    const resumed = await createSession({
+      sessionId: "session-1",
+      attach: true,
+      seedMessages: loaded!.messages,
       llm: { llm, model: TEST_MODEL_2 },
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
     });
 
     expect(resumed.messages()).toEqual(first.messages());
-    const stored = await storage.loadSession("session-1");
-    expect(stored!.resumeTurnConfig.model).toEqual({ provider: "test", model: "mock-2" });
+    expect(resumed.model).toEqual(TEST_MODEL_2);
   });
 
   test("persists compacted visible history across resume and branch", async () => {
@@ -968,7 +963,11 @@ describe("createSession", () => {
       "assistant",
     ]);
 
-    const resumed = await resumeSession("session-1", {
+    const loaded = await readSession(driver, "session-1");
+    const resumed = await createSession({
+      sessionId: "session-1",
+      attach: true,
+      seedMessages: loaded!.messages,
       llm: { llm, model: SMALL_CONTEXT_MODEL },
       storage: driver,
       compaction: { strategy: compaction },
@@ -1013,7 +1012,11 @@ describe("createSession", () => {
 
     await parent.prompt("again now");
 
-    const resumedChild = await resumeSession("child", {
+    const loadedChild = await readSession(driver, "child");
+    const resumedChild = await createSession({
+      sessionId: "child",
+      attach: true,
+      seedMessages: loadedChild!.messages,
       llm: { llm, model: SMALL_CONTEXT_MODEL },
       storage: driver,
       compaction: { strategy: compaction },
@@ -1079,67 +1082,10 @@ describe("createSession", () => {
       storage: updateDriver,
     });
     updateDriver.failUpdateSession = true;
-    await expect(updateSession2.setLLM({ llm, model: TEST_MODEL_2 })).rejects.toThrow(
-      "update failed",
-    );
+    await expect(updateSession2.prompt("hello")).rejects.toThrow("update failed");
   });
 
-  test("updates storage metadata when switching models", async () => {
-    const driver = new MemoryStorage();
-    const storage = new SessionPersistenceAdapter(driver);
-    const session = await createSession({
-      sessionId: "session-1",
-      llm: {
-        llm: makeLLM(() => [
-          { type: "text-delta", text: "ok" },
-          { type: "finish", reason: "end-turn", tokens: { input: 1, output: 1 } },
-        ]),
-        model: TEST_MODEL,
-      },
-      tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
-      storage: driver,
-    });
-
-    await session.setLLM({
-      llm: makeLLM(() => [
-        { type: "text-delta", text: "updated" },
-        { type: "finish", reason: "end-turn", tokens: { input: 1, output: 1 } },
-      ]),
-      model: TEST_MODEL_2,
-    });
-
-    const stored = await storage.loadSession("session-1");
-    expect(stored!.resumeTurnConfig.model).toEqual({ provider: "test", model: "mock-2" });
-    expect(stored!.resumeTurnConfig.agent).toBe("coder");
-  });
-
-  test("prompt waits for an in-flight model switch", async () => {
-    class BlockingDriver extends MemoryStorage {
-      blockUpdates = false;
-      resumeUpdate!: () => void;
-      updateGate = Promise.resolve();
-
-      prepareBlock() {
-        this.blockUpdates = true;
-        this.updateGate = new Promise<void>((resolve) => {
-          this.resumeUpdate = resolve;
-        });
-      }
-
-      releaseBlock() {
-        this.blockUpdates = false;
-        this.resumeUpdate();
-      }
-
-      override updateSession(...args: Parameters<MemoryStorage["updateSession"]>): void {
-        if (this.blockUpdates) {
-          throw new Error("BLOCKED");
-        }
-        super.updateSession(...args);
-      }
-    }
-
-    const blockingDriver = new BlockingDriver();
+  test("setLLM swaps the model for subsequent prompts", async () => {
     const session = await createSession({
       sessionId: "session-1",
       llm: {
@@ -1150,23 +1096,8 @@ describe("createSession", () => {
         model: TEST_MODEL,
       },
       tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
-      storage: blockingDriver,
     });
 
-    blockingDriver.prepareBlock();
-    const switchError = session
-      .setLLM({
-        llm: makeLLM(() => [
-          { type: "text-delta", text: "from llm2" },
-          { type: "finish", reason: "end-turn", tokens: { input: 1, output: 1 } },
-        ]),
-        model: TEST_MODEL_2,
-      })
-      .catch(() => {});
-    blockingDriver.releaseBlock();
-    await switchError;
-
-    blockingDriver.blockUpdates = false;
     await session.setLLM({
       llm: makeLLM(() => [
         { type: "text-delta", text: "from llm2" },
@@ -1178,6 +1109,7 @@ describe("createSession", () => {
     const result = await session.prompt("hello");
     expect(result.parts).toEqual([{ type: "text", text: "from llm2" }]);
     expect(result.model).toEqual({ provider: "test", model: "mock-2" });
+    expect(session.model).toEqual(TEST_MODEL_2);
   });
 
   test("branches from a chosen message and keeps parent and child independent", async () => {
@@ -1309,7 +1241,7 @@ describe("createSession", () => {
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
       tools: createCoderTools(env, { workdir: "/project" }),
-      agents: [{ name: "coder", systemPrompt: "You are a coder.", mode: "primary", maxSteps: 3 }],
+      maxSteps: 3,
       onEvent(event) {
         events.push(event);
       },
@@ -1367,7 +1299,7 @@ describe("createSession", () => {
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
       tools: createCoderTools(env, { workdir: "/project" }),
-      agents: [{ name: "coder", systemPrompt: "You are a coder.", mode: "primary", maxSteps: 1 }],
+      maxSteps: 1,
     });
 
     const result = await session.prompt("One shot.");
@@ -1396,7 +1328,7 @@ describe("createSession", () => {
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
       tools: createCoderTools(env, { workdir: "/project" }),
-      agents: [{ name: "coder", systemPrompt: "You are a coder.", mode: "primary", maxSteps: 10 }],
+      maxSteps: 10,
     });
 
     const result = await session.prompt("Finish early.");
@@ -1406,7 +1338,7 @@ describe("createSession", () => {
     expect(result.finishReason).toBe("end-turn");
   });
 
-  test("subagent maxSteps is independent of the parent", async () => {
+  test("a host-authored subagent tool runs a child session with its own maxSteps", async () => {
     const env = createMockEnvironment({ "/project/file.txt": "hello" });
     let childLLMCalls = 0;
     const llm = makeLLM((request) => {
@@ -1445,19 +1377,27 @@ describe("createSession", () => {
       ];
     });
 
+    // Sub-agents are now a host tool that calls createSession itself, owning the
+    // child's config (here a tighter maxSteps than the parent).
+    const taskTool: ToolDef<{ prompt: string }> = {
+      id: "task",
+      description: "Delegate to a child agent.",
+      parameters: z.object({ prompt: z.string() }),
+      async execute({ prompt }) {
+        const child = await createSession({
+          llm: { llm, model: TEST_MODEL },
+          tools: createCoderTools(env, { workdir: "/project" }),
+          maxSteps: 2,
+        });
+        const reply = await child.prompt(prompt);
+        return { output: reply.error ? `child stopped: ${reply.error.code}` : "child done" };
+      },
+    };
+
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
-      tools: createCoderTools(env, { workdir: "/project" }),
-      agents: [
-        { name: "coder", systemPrompt: "You are a coder.", mode: "primary", maxSteps: 50 },
-        {
-          name: "explorer",
-          systemPrompt: "You are an explorer.",
-          mode: "subagent",
-          tools: ["read"],
-          maxSteps: 2,
-        },
-      ],
+      tools: [taskTool],
+      maxSteps: 50,
     });
 
     const result = await session.prompt("Delegate to subagent.");
@@ -2007,7 +1947,7 @@ describe("createSession", () => {
 
   test("beforeLLMCall receives session context", async () => {
     const env = createMockEnvironment();
-    const hookCalls: Array<{ sessionId: string; agent: string; system: string }> = [];
+    const hookCalls: Array<{ sessionId: string; system: string }> = [];
     const llm = makeLLM(() => [
       { type: "text-delta", text: "ok" },
       { type: "finish", reason: "end-turn", tokens: { input: 10, output: 5 } },
@@ -2016,10 +1956,10 @@ describe("createSession", () => {
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
       tools: createCoderTools(env, { workdir: "/project" }),
+      systemPrompt: "You are a coder.",
       beforeLLMCall: async (ctx) => {
         hookCalls.push({
           sessionId: ctx.sessionId,
-          agent: ctx.agent,
           system: ctx.system,
         });
         return undefined;
@@ -2029,7 +1969,6 @@ describe("createSession", () => {
     await session.prompt("hello");
     expect(hookCalls).toHaveLength(1);
     expect(hookCalls[0]!.sessionId).toBe(session.id);
-    expect(hookCalls[0]!.agent).toBe("coder");
     expect(hookCalls[0]!.system).toContain("You are");
   });
 
@@ -2122,7 +2061,7 @@ describe("createSession", () => {
     const session = await createSession({
       llm: { llm, model: TEST_MODEL },
       tools: createCoderTools(env, { workdir: "/project" }),
-      agents: [{ name: "coder", systemPrompt: "You are a coder.", mode: "primary", maxSteps: 2 }],
+      maxSteps: 2,
     });
 
     const r1 = await session.prompt("First prompt.");
@@ -2158,7 +2097,13 @@ describe("createSession", () => {
     ).rejects.toThrow("Session already exists: existing-session");
   });
 
-  test("resumeSession throws when session does not exist", async () => {
+  test("readSession returns null when session does not exist", async () => {
+    const driver = new MemoryStorage();
+
+    expect(await readSession(driver, "nonexistent")).toBeNull();
+  });
+
+  test("attach fails when the session does not exist", async () => {
     const driver = new MemoryStorage();
     const llm = makeLLM(() => [
       { type: "text-delta", text: "ok" },
@@ -2166,14 +2111,16 @@ describe("createSession", () => {
     ]);
 
     await expect(
-      resumeSession("nonexistent", {
+      createSession({
+        sessionId: "nonexistent",
+        attach: true,
         llm: { llm, model: TEST_MODEL },
         storage: driver,
       }),
     ).rejects.toThrow("Session not found: nonexistent");
   });
 
-  test("resumeSession defaults agent from stored session", async () => {
+  test("attach reuses the existing session and keeps appending turns", async () => {
     const driver = new MemoryStorage();
     const storage = new SessionPersistenceAdapter(driver);
     const llm = makeLLM(() => [
@@ -2181,22 +2128,28 @@ describe("createSession", () => {
       { type: "finish", reason: "end-turn", tokens: { input: 1, output: 1 } },
     ]);
 
-    await createSession({
+    const first = await createSession({
       sessionId: "session-1",
       llm: { llm, model: TEST_MODEL },
       tools: createCoderTools(createMockEnvironment(), { workdir: "/original" }),
       storage: driver,
     });
+    await first.prompt("hello");
 
-    const resumed = await resumeSession("session-1", {
+    const loaded = await readSession(driver, "session-1");
+    const resumed = await createSession({
+      sessionId: "session-1",
+      attach: true,
+      seedMessages: loaded!.messages,
       llm: { llm, model: TEST_MODEL_2 },
+      tools: createCoderTools(createMockEnvironment(), { workdir: "/original" }),
       storage: driver,
     });
 
     expect(resumed.id).toBe("session-1");
-    const stored = await storage.loadSession("session-1");
-    expect(stored!.resumeTurnConfig.agent).toBe("coder");
-    expect(stored!.resumeTurnConfig.model).toEqual({ provider: "test", model: "mock-2" });
+    expect(resumed.messages()).toEqual(first.messages());
+    await resumed.prompt("again");
+    expect((await storage.loadVisibleMessages("session-1")).length).toBe(4);
   });
 
   test("branchFrom exposes parentId and branchedFromMessageId on the child session", async () => {
@@ -2224,7 +2177,7 @@ describe("createSession", () => {
     expect(child.branchedFromMessageId).toBe(branchPoint);
   });
 
-  test("resumeSession preserves parentId and branchedFromMessageId", async () => {
+  test("attach preserves parentId and branchedFromMessageId", async () => {
     const driver = new MemoryStorage();
     const llm = makeLLM((request) => [
       { type: "text-delta", text: `reply:${lastUserText(request)}` },
@@ -2242,7 +2195,14 @@ describe("createSession", () => {
     const branchPoint = parent.messages()[0]!.id;
     await parent.branchFrom(branchPoint, { sessionId: "child" });
 
-    const resumed = await resumeSession("child", {
+    const loaded = await readSession(driver, "child");
+    expect(loaded!.parentSessionId).toBe("parent");
+    expect(loaded!.branchedFromMessageId).toBe(branchPoint);
+
+    const resumed = await createSession({
+      sessionId: "child",
+      attach: true,
+      seedMessages: loaded!.messages,
       llm: { llm, model: TEST_MODEL },
       storage: driver,
     });
@@ -2274,7 +2234,6 @@ describe("createSession", () => {
     const sessions = await listSessions(driver);
     expect(sessions.map((s) => s.id)).toEqual(expect.arrayContaining(["session-a", "session-b"]));
     expect(sessions).toHaveLength(2);
-    expect(sessions[0]!.agent).toBe("coder");
   });
 
   test("listBranches returns child sessions of a parent", async () => {
@@ -2318,13 +2277,13 @@ describe("createSession", () => {
       llm: { llm, model: TEST_MODEL },
       tools: createCoderTools(createMockEnvironment(), { workdir: "/project" }),
       storage: driver,
+      metadata: { agentId: "coder" },
     });
 
     const info = await getSessionInfo(driver, "session-1");
     expect(info).not.toBeNull();
     expect(info!.id).toBe("session-1");
-    expect(info!.agent).toBe("coder");
-    expect(info!.model).toEqual({ provider: "test", model: "mock-1" });
+    expect(info!.metadata).toEqual({ agentId: "coder" });
     expect(info!.parentSessionId).toBeUndefined();
 
     const missing = await getSessionInfo(driver, "nonexistent");

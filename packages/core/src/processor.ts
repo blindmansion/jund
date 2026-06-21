@@ -12,7 +12,6 @@ import type {
   AfterToolCallHook,
   BeforeLLMCallHook,
   BeforeToolCallHook,
-  ToolContext,
   ToolDef,
   ToolResult,
 } from "./tool/types.ts";
@@ -91,7 +90,6 @@ export interface CallLLMOptions {
   tools?: LLMToolDef[];
   abort: AbortSignal;
   sessionId: string;
-  agent: string;
   temperature?: number;
   maxOutputTokens?: number;
   retry?: { maxAttempts?: number; maxDelayMs?: number };
@@ -114,7 +112,6 @@ export async function callLLM(options: CallLLMOptions): Promise<AssistantMessage
   if (options.beforeLLMCall) {
     const patch = await options.beforeLLMCall({
       sessionId: options.sessionId,
-      agent: options.agent,
       system: options.system,
       messages: options.messages,
       tools: options.tools ?? [],
@@ -236,8 +233,6 @@ export interface ProcessTurnOptions {
   tools: LLMToolDef[];
   toolMap: Map<string, ToolDef>;
   sessionId: string;
-  spawnSubagent?: ToolContext["spawnSubagent"];
-  agent: string;
   model: ModelRef;
   abort: AbortSignal;
   emit(event: AgentEvent): void;
@@ -295,7 +290,6 @@ async function executeModelTool(
     ctx: {
       sessionId: options.sessionId,
       abort: options.abort,
-      spawnSubagent: options.spawnSubagent,
       onUpdate(partial) {
         if (partial.output) {
           options.emit({
@@ -331,7 +325,6 @@ export async function processTurn(options: ProcessTurnOptions): Promise<Assistan
     id: generateId(),
     role: "assistant",
     parts: [],
-    agent: options.agent,
     model: options.model,
   };
 
@@ -343,7 +336,6 @@ export async function processTurn(options: ProcessTurnOptions): Promise<Assistan
     tools: options.tools,
     abort: options.abort,
     sessionId: options.sessionId,
-    agent: options.agent,
     temperature: options.temperature,
     maxOutputTokens: options.maxOutputTokens,
     retry: options.retry,

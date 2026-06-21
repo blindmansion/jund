@@ -1,23 +1,9 @@
 import { z } from "zod";
-import type { AgentConfig } from "../agent.ts";
 import type { LLMToolDef } from "../llm.ts";
 import type { ToolDef } from "./types.ts";
 
-type ToolAccess = Pick<AgentConfig, "tools" | "deniedTools"> | undefined;
-
 function toJsonSchema(parameters: ToolDef["parameters"]): Record<string, unknown> {
   return z.toJSONSchema(parameters) as Record<string, unknown>;
-}
-
-export function filterToolsForAgent(tools: ToolDef[], agent?: ToolAccess): ToolDef[] {
-  const denied = new Set(agent?.deniedTools ?? []);
-  const allowed = agent?.tools ? new Set(agent.tools) : undefined;
-
-  return tools.filter((tool) => {
-    if (denied.has(tool.id)) return false;
-    if (!allowed) return true;
-    return allowed.has(tool.id);
-  });
 }
 
 export function buildToolMap(tools: ToolDef[]): Map<string, ToolDef> {
@@ -59,15 +45,7 @@ export class ToolRegistry {
     return [...this.#tools.values()];
   }
 
-  listForAgent(agent?: ToolAccess): ToolDef[] {
-    return filterToolsForAgent(this.list(), agent);
-  }
-
-  mapForAgent(agent?: ToolAccess): Map<string, ToolDef> {
-    return buildToolMap(this.listForAgent(agent));
-  }
-
-  toLLMTools(agent?: ToolAccess): LLMToolDef[] {
-    return this.listForAgent(agent).map(toLLMTool);
+  toLLMTools(): LLMToolDef[] {
+    return this.list().map(toLLMTool);
   }
 }
